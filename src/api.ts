@@ -40,6 +40,10 @@ export interface MemoryItemFields {
   confidence?: MemoryItem['confidence'];
 }
 
+export interface CreateSessionInput extends Partial<ResumeSession> {
+  initial_message?: string;
+}
+
 export const api = {
   // Config
   getSettings: () => request<SettingsView>('/settings'),
@@ -68,7 +72,7 @@ export const api = {
 
   // Resume sessions
   getSessions: () => request<ResumeSession[]>('/sessions'),
-  createSession: (body: Partial<ResumeSession>) => request<ResumeSession>('/sessions', { method: 'POST', body }),
+  createSession: (body: CreateSessionInput) => request<ResumeSession>('/sessions', { method: 'POST', body }),
   getSession: (id: string) => request<ResumeSession>(`/sessions/${id}`),
   updateSession: (id: string, fields: Partial<ResumeSession>) =>
     request<ResumeSession>(`/sessions/${id}`, { method: 'PATCH', body: fields }),

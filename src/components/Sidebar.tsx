@@ -1,5 +1,6 @@
 import { Cat, FilePlus2, FileText, Settings as SettingsIcon, Sparkles, Trash2 } from 'lucide-react';
-import type { MouseEvent } from 'react';
+import { useState } from 'react';
+import type { KeyboardEvent, MouseEvent } from 'react';
 import type { ResumeSession } from '../../shared/types.ts';
 
 export type View = 'home' | 'copilot' | 'memory' | 'settings';
@@ -12,6 +13,7 @@ interface SidebarProps {
   onNewResume: () => void;
   onSelectView: (view: View) => void;
   onSelectSession: (id: string) => void;
+  onRenameSession: (id: string, title: string) => Promise<void>;
   onDeleteSession: (id: string) => void;
 }
 
@@ -26,11 +28,32 @@ export default function Sidebar({
   onNewResume,
   onSelectView,
   onSelectSession,
+  onRenameSession,
   onDeleteSession
 }: SidebarProps) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [titleDraft, setTitleDraft] = useState('');
+
   function remove(id: string, event: MouseEvent): void {
     event.stopPropagation();
     onDeleteSession(id);
+  }
+
+  function startRename(session: ResumeSession, event: MouseEvent): void {
+    event.stopPropagation();
+    setEditingId(session.id);
+    setTitleDraft(session.title || 'Untitled role');
+  }
+
+  async function saveRename(id: string): Promise<void> {
+    const title = titleDraft.trim() || 'Untitled role';
+    setEditingId(null);
+    await onRenameSession(id, title);
+  }
+
+  function onRenameKeyDown(id: string, event: KeyboardEvent<HTMLInputElement>): void {
+    if (event.key === 'Enter') void saveRename(id);
+    if (event.key === 'Escape') setEditingId(null);
   }
 
   const navActive = (v: View) => !activeSessionId && view === v;
@@ -59,17 +82,33 @@ export default function Sidebar({
         <p className="sectionLabel">Resumes</p>
         {sessions.length === 0 && <p className="sidebarEmpty">No resumes yet</p>}
         {sessions.map((s) => (
-          <button
+          <div
             key={s.id}
+            role="button"
+            tabIndex={0}
             className={`sessionRow ${activeSessionId === s.id ? 'active' : ''}`}
             onClick={() => onSelectSession(s.id)}
           >
             <FileText size={15} />
-            <span className="sessionTitle">{s.title || 'Untitled role'}</span>
+            {editingId === s.id ? (
+              <input
+                className="sidebarTitleInput"
+                value={titleDraft}
+                autoFocus
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                onBlur={() => void saveRename(s.id)}
+                onKeyDown={(e) => onRenameKeyDown(s.id, e)}
+              />
+            ) : (
+              <span className="sessionTitle" onDoubleClick={(e) => startRename(s, e)}>
+                {s.title || 'Untitled role'}
+              </span>
+            )}
             <span className="rowDelete" onClick={(e) => remove(s.id, e)} aria-label="Delete">
               <Trash2 size={14} />
             </span>
-          </button>
+          </div>
         ))}
       </div>
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import { Cat, PanelRightOpen, Wand2 } from 'lucide-react';
 import { api } from '../api.ts';
 import Chat from '../components/Chat.tsx';
@@ -24,6 +25,8 @@ export default function SessionView({ sessionId, templates, onSessionChanged }: 
   const [messages, setMessages] = useState<ResumeMessage[]>([]);
   const [versions, setVersions] = useState<ResumeVersionState>({ list: [], selectedId: null });
   const [showResume, setShowResume] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -45,6 +48,25 @@ export default function SessionView({ sessionId, templates, onSessionChanged }: 
   async function refreshSession(): Promise<void> {
     setSession(await api.getSession(sessionId));
     onSessionChanged();
+  }
+
+  async function saveTitle(): Promise<void> {
+    if (!session) return;
+    const title = titleDraft.trim() || 'Untitled role';
+    setIsEditingTitle(false);
+    setSession(await api.updateSession(sessionId, { title }));
+    onSessionChanged();
+  }
+
+  function editTitle(): void {
+    if (!session) return;
+    setTitleDraft(session.title || 'Untitled role');
+    setIsEditingTitle(true);
+  }
+
+  function onTitleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    if (event.key === 'Enter') void saveTitle();
+    if (event.key === 'Escape') setIsEditingTitle(false);
   }
 
   async function send(content: string): Promise<void> {
@@ -117,7 +139,20 @@ export default function SessionView({ sessionId, templates, onSessionChanged }: 
     <div className="pane">
       <header className="paneHeader">
         <div className="sessionHead">
-          <div className="paneTitle">{session.title || 'New resume'}</div>
+          {isEditingTitle ? (
+            <input
+              className="titleInput"
+              value={titleDraft}
+              autoFocus
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onBlur={saveTitle}
+              onKeyDown={onTitleKeyDown}
+            />
+          ) : (
+            <div className="paneTitle editableTitle" onDoubleClick={editTitle}>
+              {session.title || 'New resume'}
+            </div>
+          )}
           <span className="paneSub">{subtitle}</span>
         </div>
       </header>

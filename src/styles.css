@@ -132,11 +132,16 @@ button.ghost.danger:hover { color: var(--danger); }
   display: flex; align-items: center; gap: 9px;
   width: 100%; text-align: left; padding: 9px 11px; border-radius: 9px;
   color: var(--text); font-size: 14px;
+  cursor: pointer;
 }
 .sessionRow:hover { background: var(--elevated); }
 .sessionRow.active { background: var(--elevated); }
 .sessionRow svg { flex-shrink: 0; color: var(--muted); }
 .sessionTitle { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebarTitleInput {
+  flex: 1; min-width: 0; padding: 2px 4px; border-radius: 6px;
+  background: var(--bubble); font-size: 13px;
+}
 .rowDelete { display: none; color: var(--faint); padding: 2px; border-radius: 6px; }
 .sessionRow:hover .rowDelete { display: inline-flex; }
 .rowDelete:hover { color: var(--danger); }
@@ -152,6 +157,11 @@ button.ghost.danger:hover { color: var(--danger); }
   border-bottom: 1px solid var(--border-soft);
 }
 .paneTitle { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+.editableTitle { cursor: text; }
+.titleInput {
+  max-width: min(420px, 70vw); padding: 4px 7px; border-radius: 7px;
+  background: var(--elevated); font-weight: 600; font-size: 15px;
+}
 .sessionHead { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .paneSub { color: var(--faint); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flip { transform: rotate(180deg); }

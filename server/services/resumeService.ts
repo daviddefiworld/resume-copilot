@@ -25,6 +25,7 @@ import type {
 
 export interface NewSessionInput {
   title?: string;
+  initial_message?: string;
   personality_id?: string;
   company_name?: string;
   job_title?: string;
@@ -42,6 +43,22 @@ interface TargetExtract {
   location: string;
   job_description: string;
   company_notes: string;
+}
+
+class ResumeTitle {
+  static fromInitialMessage(message: string): string {
+    const normalized = message
+      .replace(/\s+/g, ' ')
+      .replace(/^#+\s*/, '')
+      .trim();
+    if (!normalized) return 'Untitled role';
+
+    const sentence = normalized.split(/[.!?\n]/).find(Boolean) ?? normalized;
+    const title = sentence
+      .replace(/^(i\s+am\s+applying\s+(for|to)|applying\s+(for|to)|job\s+description\s*:)\s+/i, '')
+      .trim();
+    return title.length > 48 ? `${title.slice(0, 45).trim()}...` : title;
+  }
 }
 
 // One canvas chat turn: a reply, plus an optional resume edit.
@@ -71,9 +88,10 @@ class ResumeService {
   // ---- Sessions / job target ----
 
   createSession(input: NewSessionInput): ResumeSession {
+    const initialTitle = ResumeTitle.fromInitialMessage(String(input.initial_message || ''));
     const session = {
       id: randomUUID(),
-      title: String(input.title || input.job_title || 'Untitled role').trim(),
+      title: String(input.title || input.job_title || initialTitle).trim(),
       personality_id: input.personality_id || 'strategic_minimalist',
       company_name: String(input.company_name || '').trim(),
       job_title: String(input.job_title || '').trim(),
