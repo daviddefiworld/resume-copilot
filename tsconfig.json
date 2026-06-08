@@ -20,5 +20,5 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "server", "shared", "server.ts", "vite.config.ts"]
+  "include": ["src", "server", "shared", "electron", "server.ts", "vite.config.ts"]
 }

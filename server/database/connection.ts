@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, '..', '..', 'data');
+const DATA_DIR = process.env.SELF_TOOL_DATA_DIR || path.join(__dirname, '..', '..', 'data');
 const DB_PATH = path.join(DATA_DIR, 'resume-builder.sqlite');
 
 // Owns the SQLite connection and schema. One reason to change: the database
