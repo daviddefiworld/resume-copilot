@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { memoryRepository } from '../repositories/memoryRepository.ts';
 import { openRouter } from './openRouterService.ts';
 import { settingsService } from './settingsService.ts';
+import { profileService } from './profileService.ts';
 import { getPersonality } from '../data/personalities.ts';
 import { memoryInterviewSystem, memoryExtractionPrompt } from './prompts.ts';
 import type { ChatRole, MemoryItem, MemoryMessage, MemoryProposal } from '../../shared/types.ts';
@@ -13,9 +14,24 @@ interface ExtractionResult {
 // Long-term career memory: the memory chat transcript and confirmed memory
 // items. This is the ONLY place long-term memory is written. Generates ids and
 // timestamps, runs AI extraction, and delegates persistence to the repository.
+// Every operation is scoped to a profile — the chat/items UI works on the active
+// profile; resume generation passes the session's own profile explicitly.
 class MemoryService {
+  // The active profile. The Copilot chat and Memory view always operate on it.
+  private requireActiveProfile(): string {
+    const id = profileService.activeId();
+    if (!id) throw new Error('No active profile yet. Create one first.');
+    return id;
+  }
+
   listMessages(): MemoryMessage[] {
-    return memoryRepository.listMessages();
+    return memoryRepository.listMessages(this.requireActiveProfile());
+  }
+
+  // Restart the chat: wipe the transcript for the active profile. Confirmed
+  // memory items are deliberately left intact — only the conversation resets.
+  clearMessages(): void {
+    memoryRepository.deleteMessages(this.requireActiveProfile());
   }
 
   // Append the user's message, generate the agent's reply, store and return it.
@@ -23,21 +39,22 @@ class MemoryService {
     const text = String(content || '').trim();
     if (!text) throw new Error('Message is required.');
 
-    this.append('user', text);
+    const profileId = this.requireActiveProfile();
+    this.append('user', text, profileId);
 
     const personality = getPersonality(personalityId);
-    const history = this.listMessages().map((m) => ({ role: m.role, content: m.content }));
+    const history = memoryRepository.listMessages(profileId).map((m) => ({ role: m.role, content: m.content }));
     const reply = await openRouter.chat([
       { role: 'system', content: memoryInterviewSystem(personality) },
       ...history
     ]);
 
-    return this.append('assistant', reply);
+    return this.append('assistant', reply, profileId);
   }
 
-  private append(role: ChatRole, content: string): MemoryMessage {
+  private append(role: ChatRole, content: string, profileId: string): MemoryMessage {
     const message: MemoryMessage = { id: randomUUID(), role, content, created_at: new Date().toISOString() };
-    memoryRepository.appendMessage(message);
+    memoryRepository.appendMessage(message, profileId);
     return message;
   }
 
@@ -46,21 +63,39 @@ class MemoryService {
   // Runs on the higher-accuracy model. Returns proposals for the user to confirm
   // — nothing is saved here.
   async proposeUpdates(): Promise<{ items: MemoryProposal[] }> {
-    const recent = this.listMessages().slice(-30);
+    const profileId = this.requireActiveProfile();
+    const recent = memoryRepository.listMessages(profileId).slice(-30);
     if (recent.length === 0) return { items: [] };
     const transcript = recent.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
-    const existing = this.buildMemoryTextWithIds();
+    const existing = this.buildMemoryTextWithIds(profileId);
     const result = await openRouter.json<ExtractionResult>(
       memoryExtractionPrompt(transcript, existing),
       { model: settingsService.advancedModel() }
     );
-    const known = new Set(this.listItems().map((i) => i.id));
+    const existingItems = memoryRepository.listItems(profileId);
+    const known = new Set(existingItems.map((i) => i.id));
+    // Index existing items by category + normalized title to catch duplicates the
+    // model proposes as "new" when an equivalent item already exists.
+    const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, ' ').trim();
+    const byTitle = new Map(existingItems.map((i) => [`${norm(i.category)}::${norm(i.title)}`, i.id]));
+
     const items = (Array.isArray(result.items) ? result.items : [])
       .filter((i) => i && i.category && i.title && i.content)
       .map((i) => {
-        // Trust an update only when it names a memory id we actually have.
-        const isUpdate = i.action === 'update' && typeof i.id === 'string' && known.has(i.id);
-        return { ...i, action: isUpdate ? 'update' : 'new', id: isUpdate ? i.id : undefined } as MemoryProposal;
+        // Trust the model's update only when it names a memory id we actually have.
+        let action: 'new' | 'update' = i.action === 'update' && typeof i.id === 'string' && known.has(i.id) ? 'update' : 'new';
+        let id = action === 'update' ? i.id : undefined;
+        // Backstop dedup: a "new" item whose category+title already exists becomes
+        // an update to that item, so re-stated facts refresh the old entry rather
+        // than piling up a near-duplicate.
+        if (action === 'new') {
+          const match = byTitle.get(`${norm(i.category)}::${norm(i.title)}`);
+          if (match) {
+            action = 'update';
+            id = match;
+          }
+        }
+        return { ...i, action, id } as MemoryProposal;
       });
     return { items };
   }
@@ -69,6 +104,7 @@ class MemoryService {
   // overwrites the existing item it names; everything else is inserted as new.
   saveItems(proposals: MemoryProposal[]): MemoryItem[] {
     if (!Array.isArray(proposals)) throw new Error('items must be an array.');
+    const profileId = this.requireActiveProfile();
     const now = new Date().toISOString();
     const saved: MemoryItem[] = [];
     for (const p of proposals) {
@@ -85,7 +121,7 @@ class MemoryService {
           source_message_id: p.sourceMessageId ?? null,
           created_at: now,
           updated_at: now
-        }]);
+        }], profileId);
         saved.push(item);
       }
     }
@@ -93,7 +129,7 @@ class MemoryService {
   }
 
   listItems(): MemoryItem[] {
-    return memoryRepository.listItems();
+    return memoryRepository.listItems(this.requireActiveProfile());
   }
 
   updateItem(id: string, fields: Partial<Pick<MemoryItem, 'title' | 'content' | 'confidence'>>): MemoryItem {
@@ -113,9 +149,11 @@ class MemoryService {
     memoryRepository.deleteItem(id);
   }
 
-  // A plain-text rendering of memory, for resume prompts. '' when empty.
-  buildMemoryText(): string {
-    const items = this.listItems();
+  // A plain-text rendering of a profile's memory, for resume prompts. The caller
+  // passes the session's own profile so each resume builds from its profile's
+  // memory. '' when empty.
+  buildMemoryText(profileId: string): string {
+    const items = memoryRepository.listItems(profileId);
     if (items.length === 0) return '';
     return items
       .map((i) => `[${i.category}] (${i.confidence}) ${i.title}: ${i.content}`)
@@ -124,8 +162,8 @@ class MemoryService {
 
   // Like buildMemoryText but tags each item with its id, so the extraction step
   // can target an existing item for an update. '' when empty.
-  private buildMemoryTextWithIds(): string {
-    const items = this.listItems();
+  private buildMemoryTextWithIds(profileId: string): string {
+    const items = memoryRepository.listItems(profileId);
     if (items.length === 0) return '';
     return items
       .map((i) => `(id: ${i.id}) [${i.category}] (${i.confidence}) ${i.title}: ${i.content}`)

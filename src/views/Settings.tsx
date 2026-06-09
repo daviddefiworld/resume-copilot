@@ -1,17 +1,37 @@
 import { useEffect, useState } from 'react';
-import { KeyRound, Save } from 'lucide-react';
+import { FileText, KeyRound, Save, SlidersHorizontal, UserRound } from 'lucide-react';
 import type { FormEvent } from 'react';
 import { api } from '../api.ts';
 import PromptsSettings from '../components/PromptsSettings.tsx';
-import type { SettingsView } from '../../shared/types.ts';
+import ProfilesSettings from '../components/ProfilesSettings.tsx';
+import type { Profile, SettingsView } from '../../shared/types.ts';
 
-type Tab = 'general' | 'prompts';
+type Tab = 'general' | 'profiles' | 'prompts';
 
-// Settings: a General tab (OpenRouter key + model slugs) and a Prompts tab for
-// editing the system prompts. The API key lives on the server; the frontend only
-// ever learns whether one is set.
-export default function Settings({ onChange }: { onChange?: (s: SettingsView) => void }) {
-  const [tab, setTab] = useState<Tab>('general');
+interface SettingsProps {
+  onChange?: (s: SettingsView) => void;
+  profiles: Profile[];
+  activeProfileId: string | null;
+  onCreateProfile: (name: string) => Promise<void>;
+  onActivateProfile: (id: string) => Promise<void>;
+  onRenameProfile: (id: string, name: string) => Promise<void>;
+  onDeleteProfile: (id: string) => Promise<void>;
+}
+
+// Settings: General (OpenRouter key + models), Profiles (separate memories), and
+// Prompts (editable system prompts). The API key lives on the server; the
+// frontend only ever learns whether one is set.
+export default function Settings({
+  onChange,
+  profiles,
+  activeProfileId,
+  onCreateProfile,
+  onActivateProfile,
+  onRenameProfile,
+  onDeleteProfile
+}: SettingsProps) {
+  // Profiles first — it's the most-used setting (switching whose memory drives resumes).
+  const [tab, setTab] = useState<Tab>('profiles');
   const [status, setStatus] = useState<SettingsView>({ hasApiKey: false, model: '', model2: '' });
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
@@ -44,25 +64,46 @@ export default function Settings({ onChange }: { onChange?: (s: SettingsView) =>
     }
   }
 
+  const subtitle =
+    tab === 'general'
+      ? 'Your API key is stored on the server, never sent back to the browser.'
+      : tab === 'profiles'
+        ? 'Each profile keeps its own memory and resumes. Switch the active one here.'
+        : 'Edit the system prompts that drive Sox. Changes take effect immediately.';
+
   return (
     <div className="pane">
       <header className="paneHeader">
         <div className="sessionHead">
           <div className="paneTitle">Settings</div>
-          <span className="paneSub">
-            {tab === 'general'
-              ? 'Your API key is stored on the server, never sent back to the browser.'
-              : 'Edit the system prompts that drive Sox. Changes take effect immediately.'}
-          </span>
-        </div>
-        <div className="tabs">
-          <button className={`tab ${tab === 'general' ? 'on' : ''}`} onClick={() => setTab('general')}>General</button>
-          <button className={`tab ${tab === 'prompts' ? 'on' : ''}`} onClick={() => setTab('prompts')}>Prompts</button>
+          <span className="paneSub">{subtitle}</span>
         </div>
       </header>
 
-      <div className="paneScroll">
-        {tab === 'general' ? (
+      <div className="settingsLayout">
+        <nav className="settingsNav">
+          <button className={tab === 'profiles' ? 'on' : ''} onClick={() => setTab('profiles')}>
+            <UserRound size={16} /> Profiles
+          </button>
+          <button className={tab === 'general' ? 'on' : ''} onClick={() => setTab('general')}>
+            <SlidersHorizontal size={16} /> General
+          </button>
+          <button className={tab === 'prompts' ? 'on' : ''} onClick={() => setTab('prompts')}>
+            <FileText size={16} /> Prompts
+          </button>
+        </nav>
+
+        <div className="settingsContent">
+        {tab === 'profiles' ? (
+          <ProfilesSettings
+            profiles={profiles}
+            activeProfileId={activeProfileId}
+            onCreate={onCreateProfile}
+            onActivate={onActivateProfile}
+            onRename={onRenameProfile}
+            onDelete={onDeleteProfile}
+          />
+        ) : tab === 'general' ? (
           <form className="settingsForm" onSubmit={save}>
             {error && <p className="error">{error}</p>}
             {saved && <p className="ok">Saved.</p>}
@@ -100,6 +141,7 @@ export default function Settings({ onChange }: { onChange?: (s: SettingsView) =>
         ) : (
           <PromptsSettings />
         )}
+        </div>
       </div>
     </div>
   );

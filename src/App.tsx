@@ -10,7 +10,8 @@ import SessionView from './views/SessionView.tsx';
 import Settings from './views/Settings.tsx';
 import Home from './views/Home.tsx';
 import ATSAnalyzer from './views/ATSAnalyzer.tsx';
-import type { ResumeSession, Template } from '../shared/types.ts';
+import ProfileSetup from './components/ProfileSetup.tsx';
+import type { Profile, ProfilesView, ResumeSession, Template } from '../shared/types.ts';
 
 export interface ATSPrefill {
   resume: string;
@@ -31,6 +32,11 @@ export default function App() {
   // that remounts the view so its form re-initializes from the new prefill.
   const [atsPrefill, setAtsPrefill] = useState<ATSPrefill | null>(null);
   const [atsKey, setAtsKey] = useState(0);
+  // Profiles: each has its own isolated memory + resume sessions. `needProfile`
+  // gates the first-run modal that asks for a name when none exist yet.
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+  const [needProfile, setNeedProfile] = useState(false);
 
   const loadSessions = useCallback(async () => {
     setSessions(await api.getSessions());
@@ -39,8 +45,46 @@ export default function App() {
   useEffect(() => {
     api.getTemplates().then(setTemplates).catch(() => {});
     api.getSettings().then((s) => setHasApiKey(s.hasApiKey)).catch(() => {});
+    api.getProfiles().then((p) => {
+      setProfiles(p.profiles);
+      setActiveProfileId(p.activeId);
+      setNeedProfile(p.profiles.length === 0);
+    }).catch(() => {});
     loadSessions().catch(() => {});
   }, [loadSessions]);
+
+  // Sync local profile state after any change. When the active profile changes
+  // (`switched`), reset the session view and refresh sessions + memory so the
+  // app shows the newly active profile's world.
+  function applyProfiles(next: ProfilesView, switched: boolean): void {
+    setProfiles(next.profiles);
+    setActiveProfileId(next.activeId);
+    setNeedProfile(next.profiles.length === 0);
+    if (switched) {
+      setActiveSessionId(null);
+      setIsStartingResume(false);
+      setMemoryKey((k) => k + 1);
+      void loadSessions();
+    }
+  }
+
+  async function createProfile(name: string): Promise<void> {
+    applyProfiles(await api.createProfile(name), true);
+  }
+
+  async function activateProfile(id: string): Promise<void> {
+    if (id === activeProfileId) return;
+    applyProfiles(await api.activateProfile(id), true);
+  }
+
+  async function renameProfile(id: string, name: string): Promise<void> {
+    await api.renameProfile(id, name);
+    applyProfiles(await api.getProfiles(), false);
+  }
+
+  async function removeProfile(id: string): Promise<void> {
+    applyProfiles(await api.deleteProfile(id), true);
+  }
 
   async function newResume(): Promise<void> {
     setActiveSessionId(null);
@@ -93,6 +137,8 @@ export default function App() {
     await loadSessions();
   }
 
+  const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? null;
+
   return (
     <div className="app">
       <Sidebar
@@ -100,6 +146,7 @@ export default function App() {
         activeSessionId={activeSessionId}
         view={view}
         hasApiKey={hasApiKey}
+        activeProfileName={activeProfile?.name ?? null}
         onNewResume={newResume}
         onSelectView={selectView}
         onSelectSession={selectSession}
@@ -119,17 +166,27 @@ export default function App() {
         ) : isStartingResume ? (
           <NewResumeStart onSend={startResume} />
         ) : view === 'copilot' ? (
-          <CopilotChat onMemorySaved={() => setMemoryKey((k) => k + 1)} />
+          <CopilotChat key={activeProfileId ?? 'none'} onMemorySaved={() => setMemoryKey((k) => k + 1)} />
         ) : view === 'memory' ? (
-          <MemoryProfile refreshKey={memoryKey} />
+          <MemoryProfile key={activeProfileId ?? 'none'} refreshKey={memoryKey} />
         ) : view === 'ats' ? (
           <ATSAnalyzer key={atsKey} prefill={atsPrefill} />
         ) : view === 'settings' ? (
-          <Settings onChange={(s) => setHasApiKey(s.hasApiKey)} />
+          <Settings
+            onChange={(s) => setHasApiKey(s.hasApiKey)}
+            profiles={profiles}
+            activeProfileId={activeProfileId}
+            onCreateProfile={createProfile}
+            onActivateProfile={activateProfile}
+            onRenameProfile={renameProfile}
+            onDeleteProfile={removeProfile}
+          />
         ) : (
           <Home onNewResume={newResume} onCopilot={() => selectView('copilot')} />
         )}
       </main>
+
+      {needProfile && <ProfileSetup onCreate={createProfile} />}
     </div>
   );
 }

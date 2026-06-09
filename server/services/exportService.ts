@@ -104,15 +104,58 @@ class ExportService {
       doc.text(content.headline, SIDE_MARGIN, doc.y, { width: fullWidth });
     }
 
-    const line = [contact.email, contact.phone, contact.location, ...(contact.links || [])]
-      .filter(Boolean)
-      .join('   •   ');
-    if (line) {
-      doc.moveDown(0.35).fillColor('#6b7280').font(f.regular).fontSize(t.bodySize - 0.5);
-      doc.text(line, SIDE_MARGIN, doc.y, { width: fullWidth });
+    if (hasContact(contact)) {
+      doc.moveDown(0.35);
+      this.drawContactLine(doc, contact, f, {
+        x: SIDE_MARGIN,
+        width: fullWidth,
+        color: '#6b7280',
+        fontSize: t.bodySize - 0.5,
+        accent: t.accent
+      });
     }
     doc.moveDown(0.5);
     return doc.y;
+  }
+
+  // Renders the contact line as inline segments so links become clickable. Plain
+  // fields (email/phone/location) stay muted; each link is shown by a friendly
+  // label ("LinkedIn", "GitHub", or its domain) and carries a real PDF hyperlink.
+  private drawContactLine(
+    doc: Doc,
+    contact: { email: string; phone: string; location: string; links?: string[] },
+    f: FontSet,
+    opts: { x: number; width: number; color: string; fontSize: number; accent: string }
+  ): void {
+    const parts: Array<{ text: string; link?: string }> = [
+      ...[contact.email, contact.phone, contact.location].filter(Boolean).map((text) => ({ text })),
+      ...(contact.links || [])
+        .map((s) => String(s || '').trim())
+        .filter(Boolean)
+        .map((raw) => ({ text: linkLabel(raw), link: normalizeUrl(raw) }))
+    ];
+    if (parts.length === 0) return;
+
+    // Interleave separators as their own (non-link) segments.
+    const ops: Array<{ text: string; link?: string }> = [];
+    parts.forEach((part, i) => {
+      if (i > 0) ops.push({ text: '   •   ' });
+      ops.push(part);
+    });
+
+    doc.font(f.regular).fontSize(opts.fontSize);
+    ops.forEach((op, i) => {
+      const continued = i < ops.length - 1;
+      const isLink = Boolean(op.link);
+      doc.fillColor(isLink ? opts.accent : opts.color);
+      // `link`/`underline` are passed on every segment so they reset between
+      // fragments rather than bleeding from a link into the following separator.
+      if (i === 0) {
+        doc.text(op.text, opts.x, doc.y, { width: opts.width, continued, link: op.link, underline: isLink });
+      } else {
+        doc.text(op.text, { continued, link: op.link, underline: isLink });
+      }
+    });
   }
 
   private drawRail(doc: Doc, content: ResumeContent, t: Template, f: FontSet, top: number): void {
@@ -175,14 +218,15 @@ class ExportService {
       doc.text(content.headline);
     }
 
-    if (withContact) {
-      const line = [contact.email, contact.phone, contact.location, ...(contact.links || [])]
-        .filter(Boolean)
-        .join('   •   ');
-      if (line) {
-        doc.moveDown(0.3).fillColor('#4b5563').font(f.regular).fontSize(t.bodySize);
-        doc.text(line);
-      }
+    if (withContact && hasContact(contact)) {
+      doc.moveDown(0.3);
+      this.drawContactLine(doc, contact, f, {
+        x: doc.page.margins.left,
+        width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
+        color: '#4b5563',
+        fontSize: t.bodySize,
+        accent: t.accent
+      });
     }
     doc.moveDown(0.2);
   }
@@ -338,6 +382,42 @@ function fonts(t: Template): FontSet {
   return t.font === 'serif'
     ? { regular: 'Times-Roman', bold: 'Times-Bold' }
     : { regular: 'Helvetica', bold: 'Helvetica-Bold' };
+}
+
+// Whether a contact block has anything to render on the contact line.
+function hasContact(contact: { email: string; phone: string; location: string; links?: string[] }): boolean {
+  return Boolean(contact.email || contact.phone || contact.location || (contact.links || []).some(Boolean));
+}
+
+// A short, human label for a profile/portfolio URL — so the resume shows
+// "LinkedIn" rather than a long raw URL, while the hyperlink points at the URL.
+function linkLabel(raw: string): string {
+  const lower = raw.toLowerCase();
+  const known: Array<[string, string]> = [
+    ['linkedin.com', 'LinkedIn'],
+    ['github.com', 'GitHub'],
+    ['gitlab.com', 'GitLab'],
+    ['behance.net', 'Behance'],
+    ['dribbble.com', 'Dribbble'],
+    ['stackoverflow.com', 'Stack Overflow'],
+    ['medium.com', 'Medium'],
+    ['twitter.com', 'Twitter'],
+    ['x.com', 'Twitter']
+  ];
+  for (const [needle, label] of known) {
+    if (lower.includes(needle)) return label;
+  }
+  // Fall back to the bare domain (no scheme, no www, no path).
+  const domain = raw.replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/[/?#].*$/, '');
+  return domain || raw;
+}
+
+// Ensure a link string is a usable URL for the PDF hyperlink annotation: add a
+// scheme when missing, and treat a bare email as a mailto.
+function normalizeUrl(raw: string): string {
+  if (/^https?:\/\//i.test(raw) || /^mailto:/i.test(raw)) return raw;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) return `mailto:${raw}`;
+  return `https://${raw.replace(/^\/+/, '')}`;
 }
 
 export const exportService = new ExportService();

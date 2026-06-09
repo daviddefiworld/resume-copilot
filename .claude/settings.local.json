@@ -5,7 +5,11 @@
       "PowerShell(npm run typecheck)",
       "Bash(echo \"=== exit: $? ===\")",
       "Bash(py --version)",
-      "Bash(where cl *)"
+      "Bash(where cl *)",
+      "Bash(npx tsc *)",
+      "Bash(ls dist-electron/)",
+      "Bash(ls dist/)",
+      "Bash(ls release/)"
     ]
   }
 }

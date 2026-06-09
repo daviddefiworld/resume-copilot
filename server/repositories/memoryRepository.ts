@@ -7,6 +7,7 @@ import type { MemoryItem, MemoryMessage } from '../../shared/types.ts';
 class MemoryRepository {
   private readonly insertMessageStmt: Statement;
   private readonly listMessagesStmt: Statement;
+  private readonly deleteMessagesStmt: Statement;
   private readonly insertItemStmt: Statement;
   private readonly listItemsStmt: Statement;
   private readonly getItemStmt: Statement;
@@ -15,14 +16,17 @@ class MemoryRepository {
 
   constructor() {
     this.insertMessageStmt = db.prepare(
-      'INSERT INTO memory_messages (id, role, content, created_at) VALUES (@id, @role, @content, @created_at)'
+      'INSERT INTO memory_messages (id, profile_id, role, content, created_at) VALUES (@id, @profile_id, @role, @content, @created_at)'
     );
-    this.listMessagesStmt = db.prepare('SELECT * FROM memory_messages ORDER BY created_at ASC LIMIT 200');
+    this.listMessagesStmt = db.prepare(
+      'SELECT * FROM memory_messages WHERE profile_id = ? ORDER BY created_at ASC LIMIT 200'
+    );
+    this.deleteMessagesStmt = db.prepare('DELETE FROM memory_messages WHERE profile_id = ?');
     this.insertItemStmt = db.prepare(
-      `INSERT INTO memory_items (id, category, title, content, confidence, source_message_id, created_at, updated_at)
-       VALUES (@id, @category, @title, @content, @confidence, @source_message_id, @created_at, @updated_at)`
+      `INSERT INTO memory_items (id, profile_id, category, title, content, confidence, source_message_id, created_at, updated_at)
+       VALUES (@id, @profile_id, @category, @title, @content, @confidence, @source_message_id, @created_at, @updated_at)`
     );
-    this.listItemsStmt = db.prepare('SELECT * FROM memory_items ORDER BY category, created_at ASC');
+    this.listItemsStmt = db.prepare('SELECT * FROM memory_items WHERE profile_id = ? ORDER BY category, created_at ASC');
     this.getItemStmt = db.prepare('SELECT * FROM memory_items WHERE id = ?');
     this.updateItemStmt = db.prepare(
       'UPDATE memory_items SET title = ?, content = ?, confidence = ?, updated_at = ? WHERE id = ?'
@@ -32,26 +36,31 @@ class MemoryRepository {
 
   // ---- Messages ----
 
-  appendMessage(message: MemoryMessage): void {
-    this.insertMessageStmt.run(message);
+  appendMessage(message: MemoryMessage, profileId: string): void {
+    this.insertMessageStmt.run({ ...message, profile_id: profileId });
   }
 
-  listMessages(): MemoryMessage[] {
-    return this.listMessagesStmt.all() as MemoryMessage[];
+  listMessages(profileId: string): MemoryMessage[] {
+    return this.listMessagesStmt.all(profileId) as MemoryMessage[];
+  }
+
+  // Clears the chat transcript for a profile. Saved memory items are untouched.
+  deleteMessages(profileId: string): void {
+    this.deleteMessagesStmt.run(profileId);
   }
 
   // ---- Items ----
 
-  insertItems(items: MemoryItem[]): MemoryItem[] {
+  insertItems(items: MemoryItem[], profileId: string): MemoryItem[] {
     const insertAll = db.transaction((rows: MemoryItem[]) => {
-      for (const item of rows) this.insertItemStmt.run(item);
+      for (const item of rows) this.insertItemStmt.run({ ...item, profile_id: profileId });
     });
     insertAll(items);
     return items;
   }
 
-  listItems(): MemoryItem[] {
-    return this.listItemsStmt.all() as MemoryItem[];
+  listItems(profileId: string): MemoryItem[] {
+    return this.listItemsStmt.all(profileId) as MemoryItem[];
   }
 
   getItem(id: string): MemoryItem | undefined {

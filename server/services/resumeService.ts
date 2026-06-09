@@ -4,6 +4,7 @@ import type { RawSession, RawVersion } from '../repositories/resumeRepository.ts
 import { openRouter } from './openRouterService.ts';
 import { settingsService } from './settingsService.ts';
 import { memoryService } from './memoryService.ts';
+import { profileService } from './profileService.ts';
 import { getPersonality } from '../data/personalities.ts';
 import { getTemplate } from '../data/templates.ts';
 import {
@@ -89,9 +90,12 @@ class ResumeService {
   // ---- Sessions / job target ----
 
   createSession(input: NewSessionInput): ResumeSession {
+    const profileId = profileService.activeId();
+    if (!profileId) throw new Error('Create a profile first.');
     const initialTitle = ResumeTitle.fromInitialMessage(String(input.initial_message || ''));
     const session = {
       id: randomUUID(),
+      profile_id: profileId,
       title: String(input.title || input.job_title || initialTitle).trim(),
       personality_id: input.personality_id || 'strategic_minimalist',
       company_name: String(input.company_name || '').trim(),
@@ -106,7 +110,9 @@ class ResumeService {
   }
 
   listSessions(): ResumeSession[] {
-    return resumeRepository.listSessions().map((s) => this.hydrateSession(s));
+    const profileId = profileService.activeId();
+    if (!profileId) return [];
+    return resumeRepository.listSessions(profileId).map((s) => this.hydrateSession(s));
   }
 
   getSession(id: string): ResumeSession {
@@ -120,6 +126,7 @@ class ResumeService {
     if (!s) throw new Error('Resume session not found.');
     resumeRepository.updateSession({
       id,
+      profile_id: s.profile_id,
       title: fields.title ?? s.title,
       personality_id: fields.personality_id ?? s.personality_id,
       company_name: fields.company_name ?? s.company_name,
@@ -154,7 +161,7 @@ class ResumeService {
     this.appendMessage(sessionId, 'user', text);
 
     const personality = getPersonality(session.personality_id);
-    const memory = memoryService.buildMemoryText();
+    const memory = memoryService.buildMemoryText(session.profile_id || profileService.activeId() || '');
     const history = this.listMessages(sessionId).map((m) => ({ role: m.role, content: m.content }));
     const latest = resumeRepository.getLatestVersion(sessionId);
 
@@ -243,12 +250,15 @@ class ResumeService {
   // ---- Resume drafts ----
 
   async generateDraft(sessionId: string, templateId?: string): Promise<ResumeVersion> {
-    const memory = memoryService.buildMemoryText();
+    let session = this.getSession(sessionId);
+    // Build from the session's OWN profile, not necessarily the active one, so a
+    // resume always reflects the profile it was created under.
+    const profileId = session.profile_id || profileService.activeId();
+    const memory = profileId ? memoryService.buildMemoryText(profileId) : '';
     if (!memory) {
       throw new Error('No saved memory yet. Tell Sox about your background in the Copilot chat first.');
     }
 
-    let session = this.getSession(sessionId);
     if (!session.analysis) {
       await this.analyzeJob(sessionId);
       session = this.getSession(sessionId); // refresh with the extracted target + analysis

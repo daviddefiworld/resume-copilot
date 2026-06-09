@@ -36,12 +36,12 @@ class ResumeRepository {
 
   constructor() {
     this.insertSessionStmt = db.prepare(
-      `INSERT INTO resume_sessions (id, title, personality_id, company_name, job_title,
+      `INSERT INTO resume_sessions (id, profile_id, title, personality_id, company_name, job_title,
         job_description, location, company_notes, created_at)
-       VALUES (@id, @title, @personality_id, @company_name, @job_title,
+       VALUES (@id, @profile_id, @title, @personality_id, @company_name, @job_title,
         @job_description, @location, @company_notes, @created_at)`
     );
-    this.listSessionsStmt = db.prepare('SELECT * FROM resume_sessions ORDER BY created_at DESC');
+    this.listSessionsStmt = db.prepare('SELECT * FROM resume_sessions WHERE profile_id = ? ORDER BY created_at DESC');
     this.getSessionStmt = db.prepare('SELECT * FROM resume_sessions WHERE id = ?');
     this.updateSessionStmt = db.prepare(
       `UPDATE resume_sessions SET title = @title, personality_id = @personality_id,
@@ -81,8 +81,8 @@ class ResumeRepository {
     this.insertSessionStmt.run(row);
   }
 
-  listSessions(): RawSession[] {
-    return this.listSessionsStmt.all() as RawSession[];
+  listSessions(profileId: string): RawSession[] {
+    return this.listSessionsStmt.all(profileId) as RawSession[];
   }
 
   getSession(id: string): RawSession | undefined {

@@ -1,18 +1,21 @@
 import { useEffect, useState } from 'react';
-import { Cat, Check, Sparkles, X } from 'lucide-react';
+import { Cat, Check, RotateCcw, Sparkles, X } from 'lucide-react';
 import { api } from '../api.ts';
 import Chat from '../components/Chat.tsx';
+import ConfirmDialog from '../components/ConfirmDialog.tsx';
 import type { MemoryMessage, MemoryProposal } from '../../shared/types.ts';
 
 // Fixed persona for the copilot — Sox is Sox. The personality dial still tunes
 // critique style on the server; we send a sensible default here.
 const COPILOT_PERSONALITY = 'critical_mentor';
 
+// Starters are sent verbatim as the user's first message, so they read as
+// things the user would actually say — natural openers, not instructions.
 const STARTERS = [
-  'Tell Sox about your current role and what you own.',
-  'Walk through a project you are proud of.',
-  'List the skills you would put on a resume.',
-  'What kind of role are you targeting next?'
+  "Let me tell you about my current job and what I'm responsible for.",
+  "I want to walk you through a project I'm proud of.",
+  "Help me figure out which of my skills belong on a resume.",
+  "I'm not sure where to start — ask me a few questions about my work."
 ];
 
 // The Sox copilot: a warm, ChatGPT-style memory chat. Conversation builds
@@ -24,6 +27,7 @@ export default function CopilotChat({ onMemorySaved }: { onMemorySaved?: () => v
   const [proposals, setProposals] = useState<MemoryProposal[] | null>(null);
   const [picked, setPicked] = useState<Record<number, boolean>>({});
   const [error, setError] = useState('');
+  const [confirmRestart, setConfirmRestart] = useState(false);
 
   useEffect(() => {
     api.getMemoryMessages().then(setMessages).catch((e: Error) => setError(e.message));
@@ -36,6 +40,21 @@ export default function CopilotChat({ onMemorySaved }: { onMemorySaved?: () => v
     try {
       await api.sendMemoryMessage(content, COPILOT_PERSONALITY);
       setMessages(await api.getMemoryMessages());
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restart(): Promise<void> {
+    setConfirmRestart(false);
+    setError('');
+    setBusy(true);
+    try {
+      await api.clearMemoryMessages();
+      setMessages([]);
+      setProposals(null);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -91,9 +110,14 @@ export default function CopilotChat({ onMemorySaved }: { onMemorySaved?: () => v
     <div className="pane">
       <header className="paneHeader">
         <div className="paneTitle"><Cat size={18} /> Copilot chat</div>
-        <button className="pillBtn" onClick={review} disabled={busy}>
-          <Sparkles size={15} /> Review what I learned
-        </button>
+        <div className="headerActions">
+          <button className="pillBtn ghost" onClick={() => setConfirmRestart(true)} disabled={busy}>
+            <RotateCcw size={15} /> Restart
+          </button>
+          <button className="pillBtn" onClick={review} disabled={busy}>
+            <Sparkles size={15} /> Review what I learned
+          </button>
+        </div>
       </header>
 
       {error && <p className="error">{error}</p>}
@@ -108,6 +132,16 @@ export default function CopilotChat({ onMemorySaved }: { onMemorySaved?: () => v
         emptyState={emptyState}
         disclaimer="Sox only saves what you confirm. Nothing is stored until you review it."
       />
+
+      {confirmRestart && (
+        <ConfirmDialog
+          title="Start a new chat?"
+          message="This clears the current conversation. Your saved memory stays untouched."
+          confirmLabel="Start new chat"
+          onConfirm={() => void restart()}
+          onCancel={() => setConfirmRestart(false)}
+        />
+      )}
 
       {proposals && (
         <div className="modalBackdrop" onClick={() => setProposals(null)}>

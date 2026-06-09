@@ -16,6 +16,11 @@ export const memoryController = {
     res.status(201).json(reply);
   },
 
+  clearMessages(_req: Request, res: Response): void {
+    memoryService.clearMessages();
+    res.json({ ok: true });
+  },
+
   async propose(_req: Request, res: Response): Promise<void> {
     res.json(await memoryService.proposeUpdates());
   },

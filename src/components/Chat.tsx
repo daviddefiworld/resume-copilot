@@ -68,59 +68,75 @@ export default function Chat({
 
   const isEmpty = messages.length === 0 && !busy;
 
+  const composer = (
+    <div className="composerWrap">
+      {actions && <div className="composerActions">{actions}</div>}
+      <form className="composer" onSubmit={submit}>
+        <textarea
+          ref={inputRef}
+          value={text}
+          rows={1}
+          placeholder={placeholder || 'Message Sox…'}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={onKeyDown}
+        />
+        <button type="submit" className="sendBtn" disabled={busy || !text.trim()} aria-label="Send">
+          <ArrowUp size={18} />
+        </button>
+      </form>
+      {disclaimer && <p className="composerNote">{disclaimer}</p>}
+    </div>
+  );
+
+  // Empty start state mirrors ChatGPT's new-chat layout: greeting + composer
+  // sit together, vertically centered. Once the thread has messages the
+  // composer drops to its usual pinned-bottom position.
+  if (isEmpty && emptyState) {
+    return (
+      <div className="chat empty">
+        <div className="chatEmpty">
+          <div className="chatEmptyInner">
+            {emptyState}
+            {composer}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="chat">
-      {isEmpty && emptyState ? (
-        <div className="chatEmpty">{emptyState}</div>
-      ) : (
-        <div className="chatThread">
-          <div className="thread">
-            {messages.map((m) =>
-              m.role === 'user' ? (
-                <div key={m.id} className="turn user">
-                  <div className="userBubble">{m.content}</div>
-                </div>
-              ) : (
-                <div key={m.id} className="turn assistant">
-                  <div className="avatar">{assistantAvatar}</div>
-                  <div className="turnBody">
-                    <div className="turnName">{assistantName}</div>
-                    <Markdown>{m.content}</Markdown>
-                  </div>
-                </div>
-              )
-            )}
-            {busy && (
-              <div className="turn assistant">
+      <div className="chatThread">
+        <div className="thread">
+          {messages.map((m) =>
+            m.role === 'user' ? (
+              <div key={m.id} className="turn user">
+                <div className="userBubble">{m.content}</div>
+              </div>
+            ) : (
+              <div key={m.id} className="turn assistant">
                 <div className="avatar">{assistantAvatar}</div>
                 <div className="turnBody">
                   <div className="turnName">{assistantName}</div>
-                  <div className="typing"><span /><span /><span /></div>
+                  <Markdown>{m.content}</Markdown>
                 </div>
               </div>
-            )}
-            <div ref={endRef} />
-          </div>
+            )
+          )}
+          {busy && (
+            <div className="turn assistant">
+              <div className="avatar">{assistantAvatar}</div>
+              <div className="turnBody">
+                <div className="turnName">{assistantName}</div>
+                <div className="typing"><span /><span /><span /></div>
+              </div>
+            </div>
+          )}
+          <div ref={endRef} />
         </div>
-      )}
-
-      <div className="composerWrap">
-        {actions && <div className="composerActions">{actions}</div>}
-        <form className="composer" onSubmit={submit}>
-          <textarea
-            ref={inputRef}
-            value={text}
-            rows={1}
-            placeholder={placeholder || 'Message Sox…'}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={onKeyDown}
-          />
-          <button type="submit" className="sendBtn" disabled={busy || !text.trim()} aria-label="Send">
-            <ArrowUp size={18} />
-          </button>
-        </form>
-        {disclaimer && <p className="composerNote">{disclaimer}</p>}
       </div>
+
+      {composer}
     </div>
   );
 }

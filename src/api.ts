@@ -4,6 +4,8 @@ import type {
   MemoryMessage,
   MemoryProposal,
   Personality,
+  Profile,
+  ProfilesView,
   PromptView,
   ResumeMessage,
   ResumeSession,
@@ -105,6 +107,13 @@ export const api = {
   getPersonalities: () => request<Personality[]>('/personalities'),
   getTemplates: () => request<Template[]>('/templates'),
 
+  // Profiles — each has its own isolated memory and resume sessions.
+  getProfiles: () => request<ProfilesView>('/profiles'),
+  createProfile: (name: string) => request<ProfilesView>('/profiles', { method: 'POST', body: { name } }),
+  activateProfile: (id: string) => request<ProfilesView>(`/profiles/${id}/activate`, { method: 'POST' }),
+  renameProfile: (id: string, name: string) => request<Profile>(`/profiles/${id}`, { method: 'PATCH', body: { name } }),
+  deleteProfile: (id: string) => request<ProfilesView>(`/profiles/${id}`, { method: 'DELETE' }),
+
   // Editable system prompts
   getPrompts: () => request<PromptView[]>('/prompts'),
   savePrompt: (key: string, value: string) =>
@@ -115,6 +124,7 @@ export const api = {
   getMemoryMessages: () => request<MemoryMessage[]>('/memory/messages'),
   sendMemoryMessage: (content: string, personalityId: string) =>
     request<MemoryMessage>('/memory/messages', { method: 'POST', body: { content, personalityId } }),
+  clearMemoryMessages: () => request<{ ok: true }>('/memory/messages', { method: 'DELETE' }),
   proposeMemory: () => request<{ items: MemoryProposal[] }>('/memory/propose', { method: 'POST' }),
   getMemoryItems: () => request<MemoryItem[]>('/memory/items'),
   saveMemoryItems: (items: MemoryProposal[]) =>

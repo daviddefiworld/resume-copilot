@@ -1,4 +1,4 @@
-import { Cat, FilePlus2, FileText, Gauge, Settings as SettingsIcon, Sparkles, Trash2 } from 'lucide-react';
+import { Cat, FilePlus2, FileText, Gauge, Settings as SettingsIcon, Sparkles, Trash2, UserRound } from 'lucide-react';
 import { useState } from 'react';
 import type { KeyboardEvent, MouseEvent } from 'react';
 import type { ResumeSession } from '../../shared/types.ts';
@@ -10,6 +10,7 @@ interface SidebarProps {
   activeSessionId: string | null;
   view: View;
   hasApiKey: boolean;
+  activeProfileName: string | null;
   onNewResume: () => void;
   onSelectView: (view: View) => void;
   onSelectSession: (id: string) => void;
@@ -25,6 +26,7 @@ export default function Sidebar({
   activeSessionId,
   view,
   hasApiKey,
+  activeProfileName,
   onNewResume,
   onSelectView,
   onSelectSession,
@@ -64,6 +66,14 @@ export default function Sidebar({
         <span className="brandMark"><Cat size={18} /></span>
         <span className="brandName">Sox</span>
       </div>
+
+      {activeProfileName && (
+        <button className="profileChip" onClick={() => onSelectView('settings')} title="Manage profiles">
+          <UserRound size={14} />
+          <span className="profileChipName">{activeProfileName}</span>
+          <span className="profileChipHint">Switch</span>
+        </button>
+      )}
 
       <button className="newResume" onClick={onNewResume}>
         <FilePlus2 size={17} /> New resume

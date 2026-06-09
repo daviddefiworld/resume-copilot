@@ -7,6 +7,7 @@ const router = Router();
 
 router.get('/messages', asyncHandler(memoryController.listMessages));
 router.post('/messages', asyncHandler(memoryController.sendMessage));
+router.delete('/messages', asyncHandler(memoryController.clearMessages));
 router.post('/propose', asyncHandler(memoryController.propose));
 router.get('/items', asyncHandler(memoryController.listItems));
 router.post('/items', asyncHandler(memoryController.saveItems));

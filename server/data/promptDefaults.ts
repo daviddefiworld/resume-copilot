@@ -91,11 +91,18 @@ export const PROMPT_DEFS: PromptDef[] = [
       'identity and contact details whenever the user reveals them. Only record what the user ' +
       'actually stated — do not infer or embellish. Mark confidence as "confirmed" only when the ' +
       'user stated it plainly, otherwise "unverified". Skip small talk.\n\n' +
-      "You are also given the user's EXISTING saved memory. For each fact decide an action:\n" +
-      '- If it meaningfully updates, corrects, or expands an existing item, return an UPDATE: set ' +
-      '"action" to "update", set "id" to that existing item\'s id, and put the full merged content ' +
-      'in "content" (keep still-true detail, do not drop it).\n' +
-      '- If it is genuinely new, set "action" to "new" and omit "id".\n' +
+      "You are also given the user's EXISTING saved memory (each item shown with its id). Keep memory " +
+      'CLEAN: strongly prefer updating an existing item over creating a new one. For each fact decide an action:\n' +
+      '- If an existing item covers the SAME thing (same job/role, same skill area, same project, same ' +
+      'contact field, same preference) — even if the new wording differs or only adds/corrects a detail — ' +
+      'return an UPDATE: set "action" to "update", set "id" to that existing item\'s id, and put the full ' +
+      'merged, up-to-date content in "content" (keep still-true detail, drop anything the user has now ' +
+      'changed or superseded).\n' +
+      '- When the new fact is more recent or corrects the old one (e.g. a new title, a different employer, ' +
+      'updated years of experience), the UPDATE should REPLACE the outdated value, not append to it.\n' +
+      '- Only set "action" to "new" (and omit "id") when nothing existing is about the same thing.\n' +
+      '- Never create a second item that duplicates or overlaps an existing one — consolidate into the ' +
+      'existing item instead.\n' +
       '- If a fact is already fully captured and unchanged, do NOT return it.\n\n' +
       'Allowed categories: {{categories}}.\n\n' +
       'Return JSON of the exact shape: { "items": [ { "action": "new" | "update", "id": string, ' +

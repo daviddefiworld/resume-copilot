@@ -49,6 +49,19 @@ export type ResumeSectionKey = 'summary' | 'skills' | 'experience' | 'projects' 
 
 // ---- Persisted records ----
 
+// A named identity with its own isolated memory and resume sessions. Switching
+// the active profile swaps the entire memory + resume world the app works with.
+export interface Profile {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface ProfilesView {
+  profiles: Profile[];
+  activeId: string | null;
+}
+
 export interface MemoryMessage {
   id: string;
   role: ChatRole;
@@ -77,6 +90,7 @@ export interface ResumeMessage {
 
 export interface ResumeSession {
   id: string;
+  profile_id: string;
   title: string;
   personality_id: string;
   company_name: string;

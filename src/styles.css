@@ -195,8 +195,11 @@ button.ghost.danger:hover { color: var(--danger); }
 .typing span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
 
-/* empty / greeting */
-.chatEmpty { flex: 1; display: grid; place-items: center; padding: 20px; }
+/* empty / greeting — ChatGPT-style: greeting + composer centered together */
+.chatEmpty { flex: 1; display: grid; place-items: center; padding: 20px; overflow-y: auto; }
+.chatEmptyInner { width: 100%; max-width: 720px; display: flex; flex-direction: column; align-items: center; }
+.chatEmptyInner .greeting { margin-bottom: 6px; }
+.chatEmptyInner .composerWrap { padding-top: 0; padding-bottom: 0; }
 .greeting { max-width: 540px; text-align: center; }
 .greetingMark {
   width: 60px; height: 60px; border-radius: 16px; margin: 0 auto 18px;
@@ -344,10 +347,28 @@ button.ghost.danger:hover { color: var(--danger); }
 }
 
 /* ---------- Settings ---------- */
+.headerActions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.headerActions .pillBtn { font-size: 13px; padding: 7px 13px; }
+
 .tabs { display: flex; gap: 4px; background: var(--elevated); border: 1px solid var(--border); border-radius: 10px; padding: 3px; flex-shrink: 0; }
 .tab { padding: 6px 14px; border-radius: 7px; font-size: 13px; color: var(--muted); font-weight: 500; }
 .tab:hover { color: var(--text); }
 .tab.on { background: var(--bubble); color: var(--text); }
+
+/* Settings: vertical tab rail on the left, scrolling content on the right. */
+.settingsLayout { flex: 1; display: flex; min-height: 0; }
+.settingsNav {
+  width: 196px; flex-shrink: 0; border-right: 1px solid var(--border-soft);
+  padding: 18px 12px; display: flex; flex-direction: column; gap: 4px;
+}
+.settingsNav button {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 9px 12px; border-radius: 9px; color: var(--muted); font-size: 14px; font-weight: 500;
+}
+.settingsNav button svg { flex-shrink: 0; }
+.settingsNav button:hover { background: var(--elevated); color: var(--text); }
+.settingsNav button.on { background: var(--elevated); color: var(--text); }
+.settingsContent { flex: 1; min-width: 0; overflow-y: auto; }
 
 .settingsForm { max-width: 520px; margin: 26px auto; padding: 0 20px; display: flex; flex-direction: column; gap: 18px; }
 
@@ -397,6 +418,10 @@ button.ghost.danger:hover { color: var(--danger); }
   background: var(--accent); color: #1a1206; font-weight: 600; padding: 8px 15px; border-radius: 9px;
   display: inline-flex; align-items: center; gap: 6px;
 }
+.modalActions button.danger { background: var(--danger); color: #fff; }
+.confirmModal { width: min(440px, 100%); }
+.confirmModal h3 { display: flex; align-items: center; gap: 8px; }
+.confirmModal h3 svg { color: var(--danger); }
 
 /* ---------- Markdown ---------- */
 .markdown { color: var(--text); }
@@ -503,3 +528,44 @@ button.ghost.danger:hover { color: var(--danger); }
 
 .atsRecs { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
 .atsRecs li { font-size: 14px; line-height: 1.55; color: var(--text); padding-left: 4px; }
+
+/* ---------- Profiles ---------- */
+/* Sidebar active-profile chip */
+.profileChip {
+  display: flex; align-items: center; gap: 8px; width: 100%; margin-bottom: 10px;
+  padding: 8px 11px; border-radius: 9px; background: var(--elevated); border: 1px solid var(--border-soft);
+  color: var(--text); font-size: 13px; text-align: left;
+}
+.profileChip:hover { border-color: var(--border); }
+.profileChip svg { flex-shrink: 0; color: var(--muted); }
+.profileChipName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.profileChipHint { font-size: 11px; color: var(--faint); flex-shrink: 0; }
+
+/* First-run modal */
+.profileSetupMark { width: 52px; height: 52px; margin: 0 0 14px; }
+.profileSetupForm { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+.profileSetupForm .pillBtn { align-self: flex-start; }
+
+/* Settings → Profiles */
+.profilesPane { max-width: 620px; margin: 24px auto; padding: 0 20px; }
+.profilesPane > .hint { margin: 0 0 18px; line-height: 1.55; }
+.profileList { display: flex; flex-direction: column; gap: 10px; }
+.profileRow {
+  display: flex; align-items: center; gap: 11px; padding: 11px 14px;
+  background: var(--sidebar); border: 1px solid var(--border); border-radius: 11px;
+}
+.profileRow.active { border-color: var(--accent); background: rgba(232, 131, 58, 0.07); }
+.profileRow.switchable { cursor: pointer; transition: border-color 0.12s, background 0.12s; }
+.profileRow.switchable:hover { border-color: var(--accent); background: rgba(232, 131, 58, 0.04); }
+.profileRow.switchable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.profileRowIcon { display: grid; place-items: center; color: var(--muted); flex-shrink: 0; }
+.profileRowName { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profileEditInput { flex: 1; min-width: 0; font-size: 14px; padding: 6px 9px; }
+.profileRowActions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.profileRowActions .pillBtn { font-size: 12.5px; padding: 5px 11px; }
+.profileCreate {
+  display: flex; gap: 10px; margin-bottom: 18px; padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.profileCreate input { flex: 1; }
+.profileCreate .pillBtn { flex-shrink: 0; white-space: nowrap; }

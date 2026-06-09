@@ -103,6 +103,12 @@ class Connection {
         value TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS profiles (
+        id         TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS memory_messages (
         id         TEXT PRIMARY KEY,
         role       TEXT NOT NULL,
@@ -156,6 +162,28 @@ class Connection {
       CREATE INDEX IF NOT EXISTS idx_resume_messages_session ON resume_messages(session_id);
       CREATE INDEX IF NOT EXISTS idx_resume_versions_session ON resume_versions(session_id);
       CREATE INDEX IF NOT EXISTS idx_memory_items_category    ON memory_items(category);
+    `);
+    this.migrate();
+  }
+
+  // Forward-only migrations for databases created before a column existed. Each
+  // step is guarded so it's safe to run on every startup. Memory and resume
+  // sessions gain a profile_id so each profile owns an isolated memory + resume
+  // set; existing rows keep profile_id NULL until the first profile adopts them.
+  private migrate(): void {
+    const addColumn = (table: string, column: string, decl: string): void => {
+      const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === column)) {
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${decl}`);
+      }
+    };
+    addColumn('memory_messages', 'profile_id', 'profile_id TEXT');
+    addColumn('memory_items', 'profile_id', 'profile_id TEXT');
+    addColumn('resume_sessions', 'profile_id', 'profile_id TEXT');
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_memory_messages_profile ON memory_messages(profile_id);
+      CREATE INDEX IF NOT EXISTS idx_memory_items_profile    ON memory_items(profile_id);
+      CREATE INDEX IF NOT EXISTS idx_resume_sessions_profile ON resume_sessions(profile_id);
     `);
   }
 }

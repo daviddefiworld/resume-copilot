@@ -83,6 +83,28 @@ async function sendPdf(req: Request, res: Response, disposition: 'attachment' | 
   const templateId = (req.query.template as string) || version.template_id;
   const pdf = await exportService.render(version.content, templateId);
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `${disposition}; filename="resume-v${version.version_number}.pdf"`);
+  res.setHeader('Content-Disposition', `${disposition}; filename="${pdfFilename(version, disposition)}"`);
   res.send(pdf);
+}
+
+// Builds the suggested file name. Downloads carry the candidate's name and a
+// timestamp so re-exporting never silently overwrites an earlier file; the
+// inline preview keeps a stable name so refreshing it doesn't churn the cache.
+function pdfFilename(version: { content: { contact?: { name?: string } }; version_number: number }, disposition: 'attachment' | 'inline'): string {
+  const name = version.content.contact?.name?.trim();
+  const base = slug(name ? `${name} resume` : 'resume');
+  if (disposition === 'inline') return `${base}-v${version.version_number}.pdf`;
+  return `${base}-v${version.version_number}-${timestamp()}.pdf`;
+}
+
+// Lowercase ASCII slug: keeps file names safe for any OS and HTTP headers.
+function slug(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'resume';
+}
+
+// Compact local-time stamp, e.g. 20260610-142345.
+function timestamp(): string {
+  const d = new Date();
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
