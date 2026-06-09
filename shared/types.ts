@@ -36,6 +36,13 @@ export interface Template {
   headingCase: 'upper' | 'title';
   rule: boolean;
   sectionOrder: ResumeSectionKey[];
+  // Optional layout/typography knobs. Absent means the single-column sans-serif
+  // default, so existing templates need no changes.
+  layout?: 'single' | 'sidebar';
+  font?: 'sans' | 'serif';
+  // For the sidebar layout: which sections live in the left rail. Everything
+  // else (plus the name header) renders in the main column.
+  sidebarSections?: ResumeSectionKey[];
 }
 
 export type ResumeSectionKey = 'summary' | 'skills' | 'experience' | 'projects' | 'education';
@@ -171,6 +178,47 @@ export interface MemoryProposal {
   content: string;
   confidence: Confidence;
   sourceMessageId?: string | null;
+}
+
+// ---- ATS score analyzer ----
+
+export type ATSBand = 'strong' | 'moderate' | 'weak' | 'poor';
+export type ATSImportance = 'critical' | 'high' | 'normal';
+
+// One scored dimension of the match. `weight` is its fixed contribution to the
+// overall score (the server owns the weights, not the model), `score` is 0–100.
+export interface ATSCategory {
+  key: string;
+  label: string;
+  weight: number;
+  score: number;
+  notes: string;
+}
+
+// A keyword/skill the job calls for, and whether it literally appears in the
+// resume. Real ATS matching is literal — "implied" does not count.
+export interface ATSKeywordHit {
+  term: string;
+  present: boolean;
+  importance: ATSImportance;
+}
+
+// A hard, gating requirement from the job (years, degree, certification) and
+// whether the resume satisfies it.
+export interface ATSRequirement {
+  requirement: string;
+  met: boolean;
+  evidence: string;
+}
+
+export interface ATSReport {
+  overallScore: number; // 0–100, weighted from the categories (computed server-side)
+  band: ATSBand;
+  verdict: string;
+  categories: ATSCategory[];
+  keywords: ATSKeywordHit[];
+  requirements: ATSRequirement[];
+  recommendations: string[];
 }
 
 // One editable system prompt, as exposed to the Settings → Prompts tab.

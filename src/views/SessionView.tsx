@@ -4,12 +4,15 @@ import { Cat, PanelRightOpen, Wand2 } from 'lucide-react';
 import { api } from '../api.ts';
 import Chat from '../components/Chat.tsx';
 import ResumePanel from '../components/ResumePanel.tsx';
+import { resumeToText } from '../resumeText.ts';
+import type { ATSPrefill } from '../App.tsx';
 import type { ResumeMessage, ResumeSession, ResumeVersion, Template } from '../../shared/types.ts';
 
 interface SessionViewProps {
   sessionId: string;
   templates: Template[];
   onSessionChanged: () => void;
+  onOpenAts: (prefill: ATSPrefill) => void;
 }
 
 interface ResumeVersionState {
@@ -17,10 +20,13 @@ interface ResumeVersionState {
   selectedId: string | null;
 }
 
+// Remembers the resume format the user last chose, so the next draft starts there.
+const TEMPLATE_KEY = 'resumeTemplate';
+
 // One resume session as a plain conversation. The user gives the job in chat —
 // no forms. Sox asks for what it needs; the resume artifact opens in a side
 // panel once a draft exists.
-export default function SessionView({ sessionId, templates, onSessionChanged }: SessionViewProps) {
+export default function SessionView({ sessionId, templates, onSessionChanged, onOpenAts }: SessionViewProps) {
   const [session, setSession] = useState<ResumeSession | null>(null);
   const [messages, setMessages] = useState<ResumeMessage[]>([]);
   const [versions, setVersions] = useState<ResumeVersionState>({ list: [], selectedId: null });
@@ -93,7 +99,9 @@ export default function SessionView({ sessionId, templates, onSessionChanged }: 
     setError('');
     setBusy(true);
     try {
-      await api.generateDraft(sessionId);
+      // Reuse the format the user last picked so a new resume opens in their
+      // preferred template instead of always defaulting to Classic ATS.
+      await api.generateDraft(sessionId, localStorage.getItem(TEMPLATE_KEY) ?? undefined);
       setMessages(await api.getSessionMessages(sessionId)); // the draft exchange now lives in the chat
       await reloadVersions();
       await refreshSession();
@@ -107,8 +115,16 @@ export default function SessionView({ sessionId, templates, onSessionChanged }: 
 
   async function changeTemplate(templateId: string): Promise<void> {
     if (!versions.selectedId) return;
+    localStorage.setItem(TEMPLATE_KEY, templateId); // remembered for the next resume build
     const updated = await api.setTemplate(versions.selectedId, templateId);
     setVersions((v) => ({ ...v, list: v.list.map((x) => (x.id === updated.id ? updated : x)) }));
+  }
+
+  // Send the current resume + this job into the ATS analyzer, prefilled.
+  function checkAts(): void {
+    const version = versions.list.find((v) => v.id === versions.selectedId);
+    if (!version || !session) return;
+    onOpenAts({ resume: resumeToText(version.content), jobDescription: session.job_description || '' });
   }
 
   if (!session) {
@@ -180,6 +196,7 @@ export default function SessionView({ sessionId, templates, onSessionChanged }: 
             templates={templates}
             onChangeTemplate={changeTemplate}
             onClose={() => setShowResume(false)}
+            onCheckAts={checkAts}
           />
         )}
       </div>

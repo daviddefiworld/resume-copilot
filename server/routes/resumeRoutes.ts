@@ -26,5 +26,6 @@ router.get('/sessions/:id/versions', asyncHandler(resumeController.listVersions)
 router.get('/versions/:id', asyncHandler(resumeController.getVersion));
 router.patch('/versions/:id/template', asyncHandler(resumeController.setTemplate));
 router.get('/versions/:id/export', asyncHandler(resumeController.exportPdf));
+router.get('/versions/:id/preview', asyncHandler(resumeController.previewPdf));
 
 export default router;

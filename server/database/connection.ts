@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -7,17 +7,93 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.SELF_TOOL_DATA_DIR || path.join(__dirname, '..', '..', 'data');
 const DB_PATH = path.join(DATA_DIR, 'resume-builder.sqlite');
 
+// A binding object may legitimately carry more keys than a statement consumes
+// (e.g. an update reusing an insert's row shape). better-sqlite3 ignored the
+// extras; node:sqlite rejects unknown named parameters, so we filter to the
+// names a statement actually declares.
+const NAMED_PARAM = /[@:$]([a-zA-Z_][a-zA-Z0-9_]*)/g;
+
+function namedParamsOf(sql: string): Set<string> {
+  const names = new Set<string>();
+  for (const match of sql.matchAll(NAMED_PARAM)) names.add(match[1]);
+  return names;
+}
+
+type Bindings = unknown[] | [Record<string, unknown>];
+
+// Minimal prepared-statement wrapper mirroring the better-sqlite3 surface the
+// repositories use: run/get/all with either positional or named bindings.
+export class Statement {
+  private readonly raw: StatementSync;
+  private readonly named: Set<string>;
+
+  constructor(raw: StatementSync, named: Set<string>) {
+    this.raw = raw;
+    this.named = named;
+  }
+
+  private bind(args: unknown[]): Bindings {
+    const [first] = args;
+    if (args.length === 1 && first !== null && typeof first === 'object' && !Array.isArray(first)) {
+      const source = first as Record<string, unknown>;
+      const filtered: Record<string, unknown> = {};
+      for (const key of this.named) if (key in source) filtered[key] = source[key];
+      return [filtered];
+    }
+    return args as Bindings;
+  }
+
+  run(...args: unknown[]): { changes: number | bigint; lastInsertRowid: number | bigint } {
+    return this.raw.run(...(this.bind(args) as Parameters<StatementSync['run']>));
+  }
+
+  get(...args: unknown[]): unknown {
+    return this.raw.get(...(this.bind(args) as Parameters<StatementSync['get']>));
+  }
+
+  all(...args: unknown[]): unknown[] {
+    return this.raw.all(...(this.bind(args) as Parameters<StatementSync['all']>));
+  }
+}
+
 // Owns the SQLite connection and schema. One reason to change: the database
 // shape. Repositories receive this prepared connection and never open their own.
+// Backed by Node's built-in node:sqlite so no native module has to be compiled
+// or rebuilt per runtime (plain Node for dev, Electron's Node when packaged).
 class Connection {
-  readonly db: Database.Database;
+  readonly db: DatabaseSync;
 
   constructor() {
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    this.db = new Database(DB_PATH);
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('foreign_keys = ON');
+    this.db = new DatabaseSync(DB_PATH);
+    this.db.exec('PRAGMA journal_mode = WAL');
+    this.db.exec('PRAGMA foreign_keys = ON');
     this.createSchema();
+  }
+
+  prepare(sql: string): Statement {
+    return new Statement(this.db.prepare(sql), namedParamsOf(sql));
+  }
+
+  exec(sql: string): void {
+    this.db.exec(sql);
+  }
+
+  // Runs `fn` inside a single transaction, mirroring better-sqlite3's
+  // db.transaction(): returns a callable that commits on success and rolls
+  // back on a thrown error.
+  transaction<Args extends unknown[], R>(fn: (...args: Args) => R): (...args: Args) => R {
+    return (...args: Args): R => {
+      this.db.exec('BEGIN');
+      try {
+        const result = fn(...args);
+        this.db.exec('COMMIT');
+        return result;
+      } catch (error) {
+        this.db.exec('ROLLBACK');
+        throw error;
+      }
+    };
   }
 
   private createSchema(): void {
@@ -84,4 +160,4 @@ class Connection {
   }
 }
 
-export const db: Database.Database = new Connection().db;
+export const db = new Connection();

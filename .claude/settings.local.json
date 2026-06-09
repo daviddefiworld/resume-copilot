@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(npm --version)",
-      "PowerShell(npm run typecheck)"
+      "PowerShell(npm run typecheck)",
+      "Bash(echo \"=== exit: $? ===\")",
+      "Bash(py --version)",
+      "Bash(where cl *)"
     ]
   }
 }

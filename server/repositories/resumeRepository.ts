@@ -1,5 +1,4 @@
-import type { Statement } from 'better-sqlite3';
-import { db } from '../database/connection.ts';
+import { db, type Statement } from '../database/connection.ts';
 import type { ResumeMessage, ResumeSession, ResumeVersion } from '../../shared/types.ts';
 
 // Raw DB rows store JSON as text and booleans as integers. The service layer

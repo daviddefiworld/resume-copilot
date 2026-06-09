@@ -5,6 +5,7 @@ import { openRouter } from './openRouterService.ts';
 import { settingsService } from './settingsService.ts';
 import { memoryService } from './memoryService.ts';
 import { getPersonality } from '../data/personalities.ts';
+import { getTemplate } from '../data/templates.ts';
 import {
   jobAnalysisPrompt,
   jobTargetExtractionPrompt,
@@ -241,7 +242,7 @@ class ResumeService {
 
   // ---- Resume drafts ----
 
-  async generateDraft(sessionId: string): Promise<ResumeVersion> {
+  async generateDraft(sessionId: string, templateId?: string): Promise<ResumeVersion> {
     const memory = memoryService.buildMemoryText();
     if (!memory) {
       throw new Error('No saved memory yet. Tell Sox about your background in the Copilot chat first.');
@@ -258,7 +259,7 @@ class ResumeService {
       resumeDraftPrompt({ personality, analysis: session.analysis as JobAnalysis, memory, target: session }),
       { model: settingsService.finalModel() }
     );
-    const version = this.saveVersion(sessionId, draft);
+    const version = this.saveVersion(sessionId, draft, getTemplate(templateId).id);
 
     // Surface the draft as a chat exchange so the session stays one conversation:
     // a user-style request and Sox's strategy reply. The resume itself is the canvas.

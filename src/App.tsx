@@ -9,7 +9,13 @@ import MemoryProfile from './views/MemoryProfile.tsx';
 import SessionView from './views/SessionView.tsx';
 import Settings from './views/Settings.tsx';
 import Home from './views/Home.tsx';
+import ATSAnalyzer from './views/ATSAnalyzer.tsx';
 import type { ResumeSession, Template } from '../shared/types.ts';
+
+export interface ATSPrefill {
+  resume: string;
+  jobDescription: string;
+}
 
 // App shell: a fixed ChatGPT-style sidebar plus the active pane. The shell owns
 // the session list and the high-level selection (which view, which session).
@@ -21,6 +27,10 @@ export default function App() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [memoryKey, setMemoryKey] = useState(0);
   const [hasApiKey, setHasApiKey] = useState(true);
+  // ATS analyzer: optional prefill when deep-linked from a resume, plus a key
+  // that remounts the view so its form re-initializes from the new prefill.
+  const [atsPrefill, setAtsPrefill] = useState<ATSPrefill | null>(null);
+  const [atsKey, setAtsKey] = useState(0);
 
   const loadSessions = useCallback(async () => {
     setSessions(await api.getSessions());
@@ -49,7 +59,22 @@ export default function App() {
   function selectView(next: View): void {
     setActiveSessionId(null);
     setIsStartingResume(false);
+    // Opening the analyzer from the sidebar starts it blank.
+    if (next === 'ats') {
+      setAtsPrefill(null);
+      setAtsKey((k) => k + 1);
+    }
     setView(next);
+  }
+
+  // Deep-link into the analyzer with a resume + job description prefilled (from
+  // the "Check ATS score" button on a resume).
+  function openAts(prefill: ATSPrefill): void {
+    setActiveSessionId(null);
+    setIsStartingResume(false);
+    setAtsPrefill(prefill);
+    setAtsKey((k) => k + 1);
+    setView('ats');
   }
 
   function selectSession(id: string): void {
@@ -89,6 +114,7 @@ export default function App() {
             sessionId={activeSessionId}
             templates={templates}
             onSessionChanged={loadSessions}
+            onOpenAts={openAts}
           />
         ) : isStartingResume ? (
           <NewResumeStart onSend={startResume} />
@@ -96,6 +122,8 @@ export default function App() {
           <CopilotChat onMemorySaved={() => setMemoryKey((k) => k + 1)} />
         ) : view === 'memory' ? (
           <MemoryProfile refreshKey={memoryKey} />
+        ) : view === 'ats' ? (
+          <ATSAnalyzer key={atsKey} prefill={atsPrefill} />
         ) : view === 'settings' ? (
           <Settings onChange={(s) => setHasApiKey(s.hasApiKey)} />
         ) : (

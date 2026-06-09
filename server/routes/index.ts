@@ -4,6 +4,7 @@ import promptsRoutes from './promptsRoutes.ts';
 import configRoutes from './configRoutes.ts';
 import memoryRoutes from './memoryRoutes.ts';
 import resumeRoutes from './resumeRoutes.ts';
+import atsRoutes from './atsRoutes.ts';
 
 // Combines every domain router under a single /api router.
 export function buildRouter(): Router {
@@ -18,6 +19,7 @@ export function buildRouter(): Router {
   router.use('/memory', memoryRoutes);
   router.use('/', configRoutes);
   router.use('/', resumeRoutes);
+  router.use('/', atsRoutes);
 
   return router;
 }

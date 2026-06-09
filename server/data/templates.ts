@@ -17,18 +17,6 @@ export const TEMPLATES: Template[] = [
     sectionOrder: ['summary', 'skills', 'experience', 'projects', 'education']
   },
   {
-    id: 'technical_compact',
-    name: 'Technical Compact',
-    description: 'Tighter spacing, skills first — fits more on one page.',
-    accent: '#1f2937',
-    nameSize: 20,
-    headingSize: 11,
-    bodySize: 9.5,
-    headingCase: 'upper',
-    rule: true,
-    sectionOrder: ['skills', 'experience', 'projects', 'summary', 'education']
-  },
-  {
     id: 'modern_professional',
     name: 'Modern Professional',
     description: 'Accent colour and roomier spacing for a polished look.',
@@ -39,6 +27,20 @@ export const TEMPLATES: Template[] = [
     headingCase: 'title',
     rule: false,
     sectionOrder: ['summary', 'experience', 'projects', 'skills', 'education']
+  },
+  {
+    id: 'toptal_profile',
+    name: 'Toptal Profile',
+    description: 'Toptal-style two-column: full-width header, skills & education in a left rail.',
+    accent: '#2f5496',
+    nameSize: 26,
+    headingSize: 11,
+    bodySize: 10,
+    headingCase: 'upper',
+    rule: false,
+    layout: 'sidebar',
+    sidebarSections: ['skills', 'education'],
+    sectionOrder: ['summary', 'experience', 'projects']
   }
 ];
 

@@ -34,6 +34,18 @@ const RESUME_CONTENT_SHAPE =
   '"strategy": { "positioning": string, "emphasizedEvidence": string[], "reducedEvidence": string[], ' +
   '"missingSignals": string[] }';
 
+// Length control. The resume renders to US Letter PDF pages, so the model needs
+// a rough sense of how much content fits a page and must treat explicit length
+// requests from the user as hard constraints.
+const PAGE_LENGTH_GUIDANCE =
+  'PAGE LENGTH (US Letter PDF): Default to a tight ONE page. As a rough budget, one page holds about ' +
+  'a 2–3 line summary, ~10–14 skills, and 2–4 roles at 3–4 bullets each (≈12–16 bullets total), plus ' +
+  'a short education line. If the user asks for a specific length (e.g. "one page", "two pages", ' +
+  '"make it shorter"), treat it as a HARD CONSTRAINT. To shorten: tighten the summary, cut the weakest ' +
+  'bullets, and reduce older or less-relevant roles to 1–2 bullets — never pad or invent content to ' +
+  'fill space. To lengthen: add the most job-relevant evidence first. Always keep the most recent and ' +
+  'most relevant experience the richest.';
+
 const MEMORY_CATEGORIES = [
   'contact_details', 'profile_summary', 'work_experience', 'projects', 'skills', 'education',
   'certifications', 'achievements', 'career_goals', 'role_preferences',
@@ -95,7 +107,7 @@ export function resumeDraftPrompt(input: {
         persona: personaLine(personality),
         resumeRichness: RESUME_RICHNESS(),
         jsonShape: RESUME_CONTENT_SHAPE
-      })
+      }) + '\n\n' + PAGE_LENGTH_GUIDANCE
     },
     {
       role: 'user',
@@ -120,7 +132,7 @@ export function resumeCanvasTurnSystem(input: {
     jsonShape: RESUME_CONTENT_SHAPE,
     current: JSON.stringify(current, null, 2),
     memory: memory || '(none saved yet)'
-  });
+  }) + '\n\n' + PAGE_LENGTH_GUIDANCE;
 }
 
 // --- Resume chat: conversational assistant inside a resume session. ---
@@ -157,6 +169,17 @@ export function resumeChatSystem(input: {
     step,
     memoryNudge
   });
+}
+
+// --- ATS analysis: score a resume against a job description, strictly. ---
+export function atsAnalysisPrompt(input: { resume: string; jobDescription: string }): ChatMessage[] {
+  return [
+    { role: 'system', content: promptsService.get('ats_analysis') },
+    {
+      role: 'user',
+      content: `JOB DESCRIPTION:\n${input.jobDescription}\n\n----------\n\nRESUME:\n${input.resume}`
+    }
+  ];
 }
 
 // --- Job target extraction: pull the target job out of the session chat. ---

@@ -1,5 +1,4 @@
-import type { Statement } from 'better-sqlite3';
-import { db } from '../database/connection.ts';
+import { db, type Statement } from '../database/connection.ts';
 
 interface SettingRow {
   value: string;

@@ -44,7 +44,8 @@ export const resumeController = {
   },
 
   async draft(req: Request, res: Response): Promise<void> {
-    res.status(201).json(await resumeService.generateDraft(param(req, 'id')));
+    const templateId = (req.body as { templateId?: string } | undefined)?.templateId;
+    res.status(201).json(await resumeService.generateDraft(param(req, 'id'), templateId));
   },
 
   markFinal(req: Request, res: Response): void {
@@ -67,11 +68,21 @@ export const resumeController = {
   },
 
   async exportPdf(req: Request, res: Response): Promise<void> {
-    const version = resumeService.getVersion(param(req, 'id'));
-    const templateId = (req.query.template as string) || version.template_id;
-    const pdf = await exportService.render(version.content, templateId);
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="resume-v${version.version_number}.pdf"`);
-    res.send(pdf);
+    await sendPdf(req, res, 'attachment');
+  },
+
+  // Same PDF, served inline so the live on-screen preview shows exactly what
+  // will export (true page-for-page parity, not an HTML approximation).
+  async previewPdf(req: Request, res: Response): Promise<void> {
+    await sendPdf(req, res, 'inline');
   }
 };
+
+async function sendPdf(req: Request, res: Response, disposition: 'attachment' | 'inline'): Promise<void> {
+  const version = resumeService.getVersion(param(req, 'id'));
+  const templateId = (req.query.template as string) || version.template_id;
+  const pdf = await exportService.render(version.content, templateId);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `${disposition}; filename="resume-v${version.version_number}.pdf"`);
+  res.send(pdf);
+}

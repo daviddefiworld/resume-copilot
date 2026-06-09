@@ -8,8 +8,9 @@ and exports them as ATS-friendly PDFs. Built per [docs/PRODUCT_REQUIREMENTS.md](
 
 - **Language:** TypeScript end to end (shared domain types in `shared/types.ts`)
 - **Frontend:** React + Vite (port 3501)
-- **Backend:** Node.js + Express + SQLite (`better-sqlite3`), port 3500. Node runs
-  the `.ts` files directly via native type-stripping — no backend build step.
+- **Backend:** Node.js + Express + SQLite (built-in `node:sqlite`), port 3500. Node
+  runs the `.ts` files directly via native type-stripping — no backend build step,
+  and no native module to compile or rebuild per runtime.
 - **AI:** OpenRouter (the backend owns all AI calls; the API key never reaches the browser)
 - **PDF:** `pdfkit`, deterministic code-defined templates
 

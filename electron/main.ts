@@ -59,7 +59,8 @@ class DesktopApp {
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: true
+        sandbox: true,
+        plugins: true // enable the built-in Chromium PDF viewer for the inline resume preview
       }
     });
 

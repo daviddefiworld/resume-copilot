@@ -1,9 +1,9 @@
-import { Cat, FilePlus2, FileText, Settings as SettingsIcon, Sparkles, Trash2 } from 'lucide-react';
+import { Cat, FilePlus2, FileText, Gauge, Settings as SettingsIcon, Sparkles, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import type { KeyboardEvent, MouseEvent } from 'react';
 import type { ResumeSession } from '../../shared/types.ts';
 
-export type View = 'home' | 'copilot' | 'memory' | 'settings';
+export type View = 'home' | 'copilot' | 'memory' | 'ats' | 'settings';
 
 interface SidebarProps {
   sessions: ResumeSession[];
@@ -75,6 +75,9 @@ export default function Sidebar({
         </button>
         <button className={navActive('memory') ? 'active' : ''} onClick={() => onSelectView('memory')}>
           <Cat size={16} /> Memory
+        </button>
+        <button className={navActive('ats') ? 'active' : ''} onClick={() => onSelectView('ats')}>
+          <Gauge size={16} /> ATS analyzer
         </button>
       </nav>
 

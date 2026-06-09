@@ -1,13 +1,10 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// The client runs on port 3501 and proxies API requests to the Node backend on
-// port 3500, so the frontend never needs to know the API origin.
+// No dev proxy: the client calls the Node backend directly (see BASE in
+// src/api.ts). CORS is enabled server-side, so the dev page on :3501 can reach
+// the API on :3500 without Vite proxying — which also avoids the stale-socket
+// proxy 500 that appeared after the app sat idle.
 export default defineConfig({
-  plugins: [react()],
-  server: {
-    proxy: {
-      '/api': 'http://localhost:3500'
-    }
-  }
+  plugins: [react()]
 });
