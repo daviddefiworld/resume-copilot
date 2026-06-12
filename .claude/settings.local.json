@@ -9,7 +9,9 @@
       "Bash(npx tsc *)",
       "Bash(ls dist-electron/)",
       "Bash(ls dist/)",
-      "Bash(ls release/)"
+      "Bash(ls release/)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

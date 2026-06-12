@@ -8,11 +8,34 @@ export type MemoryCategory =
   | 'certifications' | 'achievements' | 'career_goals' | 'role_preferences'
   | 'company_preferences' | 'constraints' | 'writing_preferences' | 'sensitive_exclusions';
 
-export type ChatRole = 'user' | 'assistant' | 'system';
+// 'tool' is only used in-flight during an agent loop (a tool-result message sent
+// back to the model). Persisted messages are always 'user' or 'assistant'.
+export type ChatRole = 'user' | 'assistant' | 'system' | 'tool';
+
+// One tool call the model decided to make (OpenAI/OpenRouter function-calling
+// shape). `arguments` is a JSON string the model produced.
+export interface ToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+}
 
 export interface ChatMessage {
   role: ChatRole;
   content: string;
+  // Present on an assistant message that is requesting tool calls, and echoed
+  // back unchanged so the model can match results to its requests.
+  tool_calls?: ToolCall[];
+  // Set on a 'tool' message: which tool call this result answers, and its name.
+  tool_call_id?: string;
+  name?: string;
+}
+
+// An OpenAI/OpenRouter-style function tool exposed to the model. `parameters`
+// is the tool's JSON Schema (an MCP tool's inputSchema maps straight onto it).
+export interface OpenAITool {
+  type: 'function';
+  function: { name: string; description: string; parameters: Record<string, unknown> };
 }
 
 export interface Personality {
@@ -67,6 +90,8 @@ export interface MemoryMessage {
   role: ChatRole;
   content: string;
   created_at: string;
+  // Tool calls the agent made while producing this message (assistant only).
+  tool_trace?: ToolTraceEntry[];
 }
 
 export interface MemoryItem {
@@ -86,6 +111,8 @@ export interface ResumeMessage {
   role: ChatRole;
   content: string;
   created_at: string;
+  // Tool calls the agent made while producing this message (assistant only).
+  tool_trace?: ToolTraceEntry[];
 }
 
 export interface ResumeSession {
@@ -243,4 +270,81 @@ export interface PromptView {
   tokens: string[];
   value: string;
   isDefault: boolean;
+}
+
+// ---- MCP servers & agent tools ----
+
+// How the app reaches an MCP server. 'stdio' spawns a local process
+// (command/args/env); 'http' connects to a remote Streamable HTTP (or SSE) URL.
+export type McpTransport = 'stdio' | 'http';
+
+// A configured MCP server. Only the fields for its transport are meaningful.
+export interface McpServer {
+  id: string;
+  name: string;
+  transport: McpTransport;
+  command: string;                  // stdio: the executable, e.g. "npx"
+  args: string[];                   // stdio: its arguments
+  env: Record<string, string>;      // stdio: extra environment variables
+  url: string;                      // http: the server endpoint
+  headers: Record<string, string>; // http: auth/other headers
+  enabled: boolean;
+  created_at: string;
+}
+
+// What the app knows about a server's live connection. Refreshed whenever the
+// agent connects to it or the user clicks "Test".
+export interface McpServerStatus {
+  connected: boolean;
+  toolCount: number;
+  tools: string[];
+  error: string | null;
+}
+
+export interface McpServerView extends McpServer {
+  status: McpServerStatus;
+}
+
+// The payload for creating or updating a server (no id/status/timestamps).
+export interface McpServerInput {
+  name: string;
+  transport: McpTransport;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  enabled?: boolean;
+}
+
+// A value the user must supply before a catalog server works (an API key, a
+// path). 'env' sets an environment variable; 'arg' appends a positional arg.
+export interface McpCatalogField {
+  key: string;
+  label: string;
+  placeholder?: string;
+  target: 'env' | 'arg';
+}
+
+// A one-click installable server in the built-in catalog.
+export interface McpCatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  transport: McpTransport;
+  command?: string;
+  args?: string[];
+  url?: string;
+  requires?: McpCatalogField[];
+  docsUrl?: string;
+}
+
+// One tool invocation the agent made during a turn, surfaced inline in chat so
+// the user can see what the agent did.
+export interface ToolTraceEntry {
+  server: string;
+  tool: string;
+  args: unknown;
+  result: string;
+  ok: boolean;
 }

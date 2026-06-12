@@ -1,5 +1,5 @@
 import { settingsService } from './settingsService.ts';
-import type { ChatMessage } from '../../shared/types.ts';
+import type { ChatMessage, OpenAITool, ToolCall } from '../../shared/types.ts';
 
 const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -16,8 +16,26 @@ interface CallOptions {
   model?: string;
 }
 
+interface CompleteOptions extends CallOptions {
+  // Tools the model may call this turn. Omitted/empty → a plain completion.
+  tools?: OpenAITool[];
+}
+
+// One assistant turn: its text and any tool calls it wants run. `content` is ''
+// when the model replied with tool calls only.
+export interface AssistantMessage {
+  content: string;
+  tool_calls?: ToolCall[];
+}
+
+// The raw message OpenRouter returns (content may be null on a tool-call turn).
+interface RawMessage {
+  content?: string | null;
+  tool_calls?: ToolCall[];
+}
+
 interface CompletionResponse {
-  choices?: Array<{ message?: { content?: string } }>;
+  choices?: Array<{ message?: RawMessage }>;
 }
 
 // True when an OpenRouter error looks like the model rejecting json_object
@@ -71,12 +89,24 @@ class OpenRouterService {
     return this.parseJson<T>(content);
   }
 
-  private async request(messages: ChatMessage[], { temperature, responseFormat, model }: RequestOptions): Promise<string> {
-    const apiKey = settingsService.apiKey();
-    if (!apiKey) {
-      throw new Error('OpenRouter API key is not set. Add it in Settings.');
+  // Agentic turn: send the conversation plus the tools the model may call, and
+  // return the assistant message (text and/or tool calls). The agent loop owns
+  // executing the calls and deciding when to stop.
+  async complete(messages: ChatMessage[], { tools, temperature = 0.4, model }: CompleteOptions = {}): Promise<AssistantMessage> {
+    const body: Record<string, unknown> = {
+      model: model || settingsService.model(),
+      messages,
+      temperature
+    };
+    if (tools && tools.length > 0) {
+      body.tools = tools;
+      body.tool_choice = 'auto';
     }
+    const message = await this.postChat(body);
+    return { content: typeof message.content === 'string' ? message.content : '', tool_calls: message.tool_calls };
+  }
 
+  private async request(messages: ChatMessage[], { temperature, responseFormat, model }: RequestOptions): Promise<string> {
     const body: Record<string, unknown> = {
       model: model || settingsService.model(),
       messages,
@@ -84,6 +114,20 @@ class OpenRouterService {
     };
     if (responseFormat) {
       body.response_format = responseFormat;
+    }
+    const message = await this.postChat(body);
+    if (typeof message.content !== 'string') {
+      throw new Error('OpenRouter returned an empty response.');
+    }
+    return message.content;
+  }
+
+  // The single outbound call: auth, transport, timeout, and error shaping. Both
+  // plain completions and tool-calling turns go through here.
+  private async postChat(body: Record<string, unknown>): Promise<RawMessage> {
+    const apiKey = settingsService.apiKey();
+    if (!apiKey) {
+      throw new Error('OpenRouter API key is not set. Add it in Settings.');
     }
 
     let response: Response;
@@ -117,11 +161,11 @@ class OpenRouterService {
     }
 
     const data = (await response.json()) as CompletionResponse;
-    const content = data.choices?.[0]?.message?.content;
-    if (typeof content !== 'string') {
+    const message = data.choices?.[0]?.message;
+    if (!message) {
       throw new Error('OpenRouter returned an empty response.');
     }
-    return content;
+    return message;
   }
 
   // Models sometimes wrap JSON in prose or code fences despite instructions.

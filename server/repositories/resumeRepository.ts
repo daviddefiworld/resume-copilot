@@ -1,4 +1,5 @@
 import { db, type Statement } from '../database/connection.ts';
+import { serializeTrace, parseTrace } from './toolTrace.ts';
 import type { ResumeMessage, ResumeSession, ResumeVersion } from '../../shared/types.ts';
 
 // Raw DB rows store JSON as text and booleans as integers. The service layer
@@ -9,6 +10,9 @@ export type RawVersion = Omit<ResumeVersion, 'content' | 'strategy' | 'is_final'
   strategy: string;
   is_final: number;
 };
+
+// A chat row as stored: tool_trace is JSON text (or null) until hydrated.
+export type RawMessage = Omit<ResumeMessage, 'tool_trace'> & { tool_trace: string | null };
 
 export type SessionInsert = Omit<ResumeSession, 'analysis'>;
 export type VersionInsert = Omit<ResumeVersion, 'content' | 'strategy' | 'is_final'> & {
@@ -52,8 +56,8 @@ class ResumeRepository {
     this.setAnalysisStmt = db.prepare('UPDATE resume_sessions SET analysis = ? WHERE id = ?');
 
     this.insertMessageStmt = db.prepare(
-      `INSERT INTO resume_messages (id, session_id, role, content, created_at)
-       VALUES (@id, @session_id, @role, @content, @created_at)`
+      `INSERT INTO resume_messages (id, session_id, role, content, tool_trace, created_at)
+       VALUES (@id, @session_id, @role, @content, @tool_trace, @created_at)`
     );
     this.listMessagesStmt = db.prepare(
       'SELECT * FROM resume_messages WHERE session_id = ? ORDER BY created_at ASC LIMIT 200'
@@ -104,11 +108,14 @@ class ResumeRepository {
   // ---- Messages ----
 
   appendMessage(message: ResumeMessage): void {
-    this.insertMessageStmt.run(message);
+    this.insertMessageStmt.run({ ...message, tool_trace: serializeTrace(message.tool_trace) });
   }
 
   listMessages(sessionId: string): ResumeMessage[] {
-    return this.listMessagesStmt.all(sessionId) as ResumeMessage[];
+    return (this.listMessagesStmt.all(sessionId) as RawMessage[]).map((row) => ({
+      ...row,
+      tool_trace: parseTrace(row.tool_trace)
+    }));
   }
 
   // ---- Versions ----

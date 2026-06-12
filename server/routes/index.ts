@@ -6,6 +6,7 @@ import profileRoutes from './profileRoutes.ts';
 import memoryRoutes from './memoryRoutes.ts';
 import resumeRoutes from './resumeRoutes.ts';
 import atsRoutes from './atsRoutes.ts';
+import mcpRoutes from './mcpRoutes.ts';
 
 // Combines every domain router under a single /api router.
 export function buildRouter(): Router {
@@ -19,6 +20,7 @@ export function buildRouter(): Router {
   router.use('/prompts', promptsRoutes);
   router.use('/profiles', profileRoutes);
   router.use('/memory', memoryRoutes);
+  router.use('/mcp', mcpRoutes);
   router.use('/', configRoutes);
   router.use('/', resumeRoutes);
   router.use('/', atsRoutes);

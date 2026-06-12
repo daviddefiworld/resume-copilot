@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { resumeRepository } from '../repositories/resumeRepository.ts';
 import type { RawSession, RawVersion } from '../repositories/resumeRepository.ts';
 import { openRouter } from './openRouterService.ts';
+import { agentRunner } from './agentRunner.ts';
 import { settingsService } from './settingsService.ts';
 import { memoryService } from './memoryService.ts';
 import { profileService } from './profileService.ts';
@@ -22,7 +23,8 @@ import type {
   ResumeMessage,
   ResumeSession,
   ResumeStrategy,
-  ResumeVersion
+  ResumeVersion,
+  ToolTraceEntry
 } from '../../shared/types.ts';
 
 export interface NewSessionInput {
@@ -166,12 +168,14 @@ class ResumeService {
     const latest = resumeRepository.getLatestVersion(sessionId);
 
     // No draft yet → plain conversation (asks for the job, then the company).
+    // Runs as an agent so installed MCP tools are available while scoping the
+    // role (e.g. researching the company); the step prompt is unchanged.
     if (!latest) {
-      const reply = await openRouter.chat([
+      const result = await agentRunner.run([
         { role: 'system', content: resumeChatSystem({ personality, target: session, hasMemory: Boolean(memory) }) },
         ...history
       ]);
-      return this.appendMessage(sessionId, 'assistant', reply);
+      return this.appendMessage(sessionId, 'assistant', result.content, result.trace);
     }
 
     // Canvas mode: a draft is open. The same chat both answers questions and
@@ -180,33 +184,37 @@ class ResumeService {
       content: JSON.parse(latest.content) as ResumeContent,
       strategy: JSON.parse(latest.strategy) as ResumeStrategy
     };
-    let reply: string;
+    // The structured edit turn stays tool-free: editing the resume needs strict
+    // JSON, and resume content must come only from confirmed memory.
     try {
       const turn = await openRouter.json<CanvasTurn>(
         [{ role: 'system', content: resumeCanvasTurnSystem({ personality, current, memory }) }, ...history],
         { model: settingsService.finalModel() }
       );
-      reply = (turn.reply || 'Done.').trim();
+      const reply = (turn.reply || 'Done.').trim();
       if (turn.edited && turn.content) {
         this.saveVersion(sessionId, { content: turn.content, strategy: turn.strategy ?? current.strategy }, latest.template_id);
       }
+      return this.appendMessage(sessionId, 'assistant', reply);
     } catch {
-      // If the structured turn fails, fall back to a plain conversational reply.
-      reply = await openRouter.chat([
+      // If the structured turn fails, fall back to a plain conversational reply,
+      // which may use MCP tools to answer the user's question.
+      const result = await agentRunner.run([
         { role: 'system', content: resumeChatSystem({ personality, target: session, hasMemory: Boolean(memory) }) },
         ...history
       ]);
+      return this.appendMessage(sessionId, 'assistant', result.content, result.trace);
     }
-    return this.appendMessage(sessionId, 'assistant', reply);
   }
 
-  private appendMessage(sessionId: string, role: ChatRole, content: string): ResumeMessage {
+  private appendMessage(sessionId: string, role: ChatRole, content: string, trace?: ToolTraceEntry[]): ResumeMessage {
     const message: ResumeMessage = {
       id: randomUUID(),
       session_id: sessionId,
       role,
       content,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      tool_trace: trace
     };
     resumeRepository.appendMessage(message);
     return message;

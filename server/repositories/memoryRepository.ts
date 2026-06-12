@@ -1,5 +1,13 @@
 import { db, type Statement } from '../database/connection.ts';
+import { serializeTrace, parseTrace } from './toolTrace.ts';
 import type { MemoryItem, MemoryMessage } from '../../shared/types.ts';
+
+// A chat row as stored: tool_trace is JSON text (or null) until hydrated.
+type MessageRow = Omit<MemoryMessage, 'tool_trace'> & { tool_trace: string | null };
+
+function hydrateMessage(row: MessageRow): MemoryMessage {
+  return { ...row, tool_trace: parseTrace(row.tool_trace) };
+}
 
 // Data access for memory chat messages and confirmed memory items. Pure
 // persistence: it stores and returns rows; ids, timestamps, and AI logic
@@ -16,7 +24,7 @@ class MemoryRepository {
 
   constructor() {
     this.insertMessageStmt = db.prepare(
-      'INSERT INTO memory_messages (id, profile_id, role, content, created_at) VALUES (@id, @profile_id, @role, @content, @created_at)'
+      'INSERT INTO memory_messages (id, profile_id, role, content, tool_trace, created_at) VALUES (@id, @profile_id, @role, @content, @tool_trace, @created_at)'
     );
     this.listMessagesStmt = db.prepare(
       'SELECT * FROM memory_messages WHERE profile_id = ? ORDER BY created_at ASC LIMIT 200'
@@ -37,11 +45,15 @@ class MemoryRepository {
   // ---- Messages ----
 
   appendMessage(message: MemoryMessage, profileId: string): void {
-    this.insertMessageStmt.run({ ...message, profile_id: profileId });
+    this.insertMessageStmt.run({
+      ...message,
+      profile_id: profileId,
+      tool_trace: serializeTrace(message.tool_trace)
+    });
   }
 
   listMessages(profileId: string): MemoryMessage[] {
-    return this.listMessagesStmt.all(profileId) as MemoryMessage[];
+    return (this.listMessagesStmt.all(profileId) as MessageRow[]).map(hydrateMessage);
   }
 
   // Clears the chat transcript for a profile. Saved memory items are untouched.

@@ -1,13 +1,16 @@
 import { ArrowUp } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent, KeyboardEvent, ReactNode } from 'react';
-import type { ChatRole } from '../../shared/types.ts';
+import type { ChatRole, ToolTraceEntry } from '../../shared/types.ts';
 import Markdown from './Markdown.tsx';
+import ToolTrace from './ToolTrace.tsx';
 
 export interface ChatBubbleMessage {
   id: string;
   role: ChatRole;
   content: string;
+  // Tool calls the agent made for this turn, shown above the reply.
+  tool_trace?: ToolTraceEntry[];
 }
 
 interface ChatProps {
@@ -118,6 +121,7 @@ export default function Chat({
                 <div className="avatar">{assistantAvatar}</div>
                 <div className="turnBody">
                   <div className="turnName">{assistantName}</div>
+                  <ToolTrace entries={m.tool_trace} />
                   <Markdown>{m.content}</Markdown>
                 </div>
               </div>

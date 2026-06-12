@@ -52,10 +52,12 @@ const MEMORY_CATEGORIES = [
   'company_preferences', 'constraints', 'writing_preferences', 'sensitive_exclusions'
 ];
 
-// --- Memory chat: interview the user to build long-term career memory. ---
-export function memoryInterviewSystem(personality: Personality): string {
+// --- Memory chat: interview the user to build long-term career memory. The
+// already-saved memory is injected so Sox builds on it instead of re-asking. ---
+export function memoryInterviewSystem(personality: Personality, memory: string): string {
   return fill(promptsService.get('memory_interview'), {
     persona: personaLine(personality),
+    memory: memory || '(nothing saved yet — this is the start of their memory)',
     guardrails: GUARDRAILS()
   });
 }

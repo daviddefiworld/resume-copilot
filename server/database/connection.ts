@@ -159,6 +159,19 @@ class Connection {
         created_at     TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS mcp_servers (
+        id         TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        transport  TEXT NOT NULL DEFAULT 'stdio',
+        command    TEXT NOT NULL DEFAULT '',
+        args       TEXT NOT NULL DEFAULT '[]',
+        env        TEXT NOT NULL DEFAULT '{}',
+        url        TEXT NOT NULL DEFAULT '',
+        headers    TEXT NOT NULL DEFAULT '{}',
+        enabled    INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_resume_messages_session ON resume_messages(session_id);
       CREATE INDEX IF NOT EXISTS idx_resume_versions_session ON resume_versions(session_id);
       CREATE INDEX IF NOT EXISTS idx_memory_items_category    ON memory_items(category);
@@ -180,6 +193,10 @@ class Connection {
     addColumn('memory_messages', 'profile_id', 'profile_id TEXT');
     addColumn('memory_items', 'profile_id', 'profile_id TEXT');
     addColumn('resume_sessions', 'profile_id', 'profile_id TEXT');
+    // Agent tool-call traces, stored as JSON on the assistant message that made
+    // them. NULL on every message written before the agent existed.
+    addColumn('memory_messages', 'tool_trace', 'tool_trace TEXT');
+    addColumn('resume_messages', 'tool_trace', 'tool_trace TEXT');
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_memory_messages_profile ON memory_messages(profile_id);
       CREATE INDEX IF NOT EXISTS idx_memory_items_profile    ON memory_items(profile_id);

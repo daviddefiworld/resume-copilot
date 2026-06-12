@@ -33,6 +33,12 @@ Run `npm run typecheck` to type-check the whole project.
    The backend runs under `node --watch`, so it **auto-restarts when you edit
    server code** — no manual restart needed. (`npm start` runs it without watch.)
 
+   Use `npm run dev:stable` to run the same two servers **without** the backend
+   `--watch` restart. Prefer this when working with MCP tools: a restart drops
+   live MCP connections and kills any stdio servers (re-spawned, and re-downloaded
+   on first `npx`, on the next request). Restart the backend by hand to pick up
+   server-code changes.
+
 SQLite data is stored in `data/resume-builder.sqlite` (created on first run).
 
 ## How it works

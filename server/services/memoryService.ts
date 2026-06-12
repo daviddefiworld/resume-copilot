@@ -1,11 +1,12 @@
 import { randomUUID } from 'crypto';
 import { memoryRepository } from '../repositories/memoryRepository.ts';
 import { openRouter } from './openRouterService.ts';
+import { agentRunner } from './agentRunner.ts';
 import { settingsService } from './settingsService.ts';
 import { profileService } from './profileService.ts';
 import { getPersonality } from '../data/personalities.ts';
 import { memoryInterviewSystem, memoryExtractionPrompt } from './prompts.ts';
-import type { ChatRole, MemoryItem, MemoryMessage, MemoryProposal } from '../../shared/types.ts';
+import type { ChatRole, MemoryItem, MemoryMessage, MemoryProposal, ToolTraceEntry } from '../../shared/types.ts';
 
 interface ExtractionResult {
   items?: MemoryProposal[];
@@ -43,17 +44,23 @@ class MemoryService {
     this.append('user', text, profileId);
 
     const personality = getPersonality(personalityId);
+    // Give Sox the profile's saved memory so it builds on what it already knows
+    // instead of re-asking. Read-only here — memory is still written only via the
+    // confirm/extract flow.
+    const memory = this.buildMemoryText(profileId);
     const history = memoryRepository.listMessages(profileId).map((m) => ({ role: m.role, content: m.content }));
-    const reply = await openRouter.chat([
-      { role: 'system', content: memoryInterviewSystem(personality) },
+    // Run as an agent so Sox can use any installed MCP tools mid-interview. The
+    // interview/guardrail instructions stay in the system prompt unchanged.
+    const result = await agentRunner.run([
+      { role: 'system', content: memoryInterviewSystem(personality, memory) },
       ...history
     ]);
 
-    return this.append('assistant', reply, profileId);
+    return this.append('assistant', result.content, profileId, result.trace);
   }
 
-  private append(role: ChatRole, content: string, profileId: string): MemoryMessage {
-    const message: MemoryMessage = { id: randomUUID(), role, content, created_at: new Date().toISOString() };
+  private append(role: ChatRole, content: string, profileId: string, trace?: ToolTraceEntry[]): MemoryMessage {
+    const message: MemoryMessage = { id: randomUUID(), role, content, created_at: new Date().toISOString(), tool_trace: trace };
     memoryRepository.appendMessage(message, profileId);
     return message;
   }

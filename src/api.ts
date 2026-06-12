@@ -1,5 +1,9 @@
 import type {
   ATSReport,
+  McpCatalogEntry,
+  McpServerInput,
+  McpServerStatus,
+  McpServerView,
   MemoryItem,
   MemoryMessage,
   MemoryProposal,
@@ -163,5 +167,16 @@ export const api = {
 
   // ATS score analyzer — standalone, stateless.
   analyzeATS: (body: { resume: string; jobDescription: string }) =>
-    request<ATSReport>('/ats/analyze', { method: 'POST', body })
+    request<ATSReport>('/ats/analyze', { method: 'POST', body }),
+
+  // MCP servers — the tools the chat agent can use.
+  getMcpServers: () => request<McpServerView[]>('/mcp/servers'),
+  getMcpCatalog: () => request<McpCatalogEntry[]>('/mcp/catalog'),
+  addMcpServer: (body: McpServerInput) => request<McpServerView>('/mcp/servers', { method: 'POST', body }),
+  importMcpConfig: (config: string) =>
+    request<{ added: number; errors: string[] }>('/mcp/import', { method: 'POST', body: { config } }),
+  updateMcpServer: (id: string, body: McpServerInput) =>
+    request<McpServerView>(`/mcp/servers/${id}`, { method: 'PATCH', body }),
+  deleteMcpServer: (id: string) => request<{ ok: true }>(`/mcp/servers/${id}`, { method: 'DELETE' }),
+  testMcpServer: (id: string) => request<McpServerStatus>(`/mcp/servers/${id}/test`, { method: 'POST' })
 };

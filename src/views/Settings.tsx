@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
-import { FileText, KeyRound, Save, SlidersHorizontal, UserRound } from 'lucide-react';
+import { FileText, KeyRound, Plug, Save, SlidersHorizontal, UserRound } from 'lucide-react';
 import type { FormEvent } from 'react';
 import { api } from '../api.ts';
 import PromptsSettings from '../components/PromptsSettings.tsx';
 import ProfilesSettings from '../components/ProfilesSettings.tsx';
+import McpSettings from '../components/McpSettings.tsx';
 import type { Profile, SettingsView } from '../../shared/types.ts';
 
-type Tab = 'general' | 'profiles' | 'prompts';
+type Tab = 'general' | 'profiles' | 'tools' | 'prompts';
 
 interface SettingsProps {
   onChange?: (s: SettingsView) => void;
@@ -69,7 +70,9 @@ export default function Settings({
       ? 'Your API key is stored on the server, never sent back to the browser.'
       : tab === 'profiles'
         ? 'Each profile keeps its own memory and resumes. Switch the active one here.'
-        : 'Edit the system prompts that drive Sox. Changes take effect immediately.';
+        : tab === 'tools'
+          ? 'Install MCP servers to give Sox real tools — filesystem, web search, and more.'
+          : 'Edit the system prompts that drive Sox. Changes take effect immediately.';
 
   return (
     <div className="pane">
@@ -87,6 +90,9 @@ export default function Settings({
           </button>
           <button className={tab === 'general' ? 'on' : ''} onClick={() => setTab('general')}>
             <SlidersHorizontal size={16} /> General
+          </button>
+          <button className={tab === 'tools' ? 'on' : ''} onClick={() => setTab('tools')}>
+            <Plug size={16} /> Tools
           </button>
           <button className={tab === 'prompts' ? 'on' : ''} onClick={() => setTab('prompts')}>
             <FileText size={16} /> Prompts
@@ -138,6 +144,8 @@ export default function Settings({
 
             <button type="submit"><Save size={15} /> Save settings</button>
           </form>
+        ) : tab === 'tools' ? (
+          <McpSettings />
         ) : (
           <PromptsSettings />
         )}
