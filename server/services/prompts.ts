@@ -156,30 +156,39 @@ export function resumeDraftPrompt(input: {
   ];
 }
 
-// --- Canvas turn: one chat reply that may also edit the live resume. ---
+// --- Canvas turn: one chat reply that may also edit the live resume.
+// `character` is this personality's own evolving memory of the user, so the
+// copilot stays in character and consistent with the relationship here too. ---
 export function resumeCanvasTurnSystem(input: {
   personality: Personality;
   current: ResumeDraft;
   memory: string;
+  character: string;
 }): string {
-  const { personality, current, memory } = input;
+  const { personality, current, memory, character } = input;
   return fill(promptsService.get('canvas_turn'), {
     persona: personaLine(personality),
     insight: INSIGHT(),
     resumeRichness: RESUME_RICHNESS(),
     jsonShape: RESUME_CONTENT_SHAPE,
     current: JSON.stringify(current, null, 2),
-    memory: memory || '(none saved yet)'
+    memory: memory || '(none saved yet)',
+    character: character || '(still getting to know them)'
   }) + '\n\n' + PAGE_LENGTH_GUIDANCE;
 }
 
-// --- Resume chat: conversational assistant inside a resume session. ---
+// --- Resume chat: conversational assistant inside a resume session. Gets the
+// same context the Copilot chat has — the user's full confirmed memory plus this
+// personality's own evolving memory of the user — so the session copilot builds
+// on what it already knows instead of starting cold. Read-only here: the session
+// chat never writes long-term or character memory. ---
 export function resumeChatSystem(input: {
   personality: Personality;
   target: ResumeSession;
-  hasMemory: boolean;
+  memory: string;
+  character: string;
 }): string {
-  const { personality, target, hasMemory } = input;
+  const { personality, target, memory, character } = input;
   const hasJob = Boolean(target.job_description);
   const hasCompany = Boolean(target.company_name);
   let step: string;
@@ -198,13 +207,15 @@ export function resumeChatSystem(input: {
       'You have both the job and the company. Confirm both briefly, point out the strongest fit ' +
       'and any gaps from their memory, and invite them to click "Generate draft" when ready.';
   }
-  const memoryNudge = hasMemory
+  const memoryNudge = memory
     ? ''
     : 'The user has no saved memory yet. Gently suggest they tell Sox about their background in ' +
       'the Copilot chat first, so the draft has something to build on.\n';
   return fill(promptsService.get('resume_chat'), {
     persona: personaLine(personality),
     insight: INSIGHT(),
+    memory: memory || '(nothing saved yet — they can build it in the Copilot chat)',
+    character: character || '(this is early in your relationship — you are still getting to know them)',
     step,
     memoryNudge
   });

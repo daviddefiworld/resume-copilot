@@ -7,6 +7,7 @@ import { settingsService } from './settingsService.ts';
 import { memoryService } from './memoryService.ts';
 import { profileService } from './profileService.ts';
 import { personalityService } from './personalityService.ts';
+import { characterMemoryService } from './characterMemoryService.ts';
 import { getTemplate } from '../data/templates.ts';
 import {
   jobAnalysisPrompt,
@@ -163,7 +164,11 @@ class ResumeService {
     this.appendMessage(sessionId, 'user', text);
 
     const personality = personalityService.get(session.personality_id);
-    const memory = memoryService.buildMemoryText(session.profile_id || profileService.activeId() || '');
+    const profileId = session.profile_id || profileService.activeId() || '';
+    const memory = memoryService.buildMemoryText(profileId);
+    // The character's own evolving memory of this user (durable notes + recap),
+    // so the session copilot is as informed and in-character as the Copilot chat.
+    const character = characterMemoryService.contextText(profileId, personality.id);
     const history = historyWithToolContext(this.listMessages(sessionId));
     const latest = resumeRepository.getLatestVersion(sessionId);
 
@@ -172,7 +177,7 @@ class ResumeService {
     // role (e.g. researching the company); the step prompt is unchanged.
     if (!latest) {
       const result = await agentRunner.run([
-        { role: 'system', content: resumeChatSystem({ personality, target: session, hasMemory: Boolean(memory) }) },
+        { role: 'system', content: resumeChatSystem({ personality, target: session, memory, character }) },
         ...history
       ]);
       return this.appendMessage(sessionId, 'assistant', result.content, result.trace);
@@ -188,7 +193,7 @@ class ResumeService {
     // JSON, and resume content must come only from confirmed memory.
     try {
       const turn = await openRouter.json<CanvasTurn>(
-        [{ role: 'system', content: resumeCanvasTurnSystem({ personality, current, memory }) }, ...history],
+        [{ role: 'system', content: resumeCanvasTurnSystem({ personality, current, memory, character }) }, ...history],
         { model: settingsService.finalModel() }
       );
       const reply = (turn.reply || 'Done.').trim();
@@ -200,7 +205,7 @@ class ResumeService {
       // If the structured turn fails, fall back to a plain conversational reply,
       // which may use MCP tools to answer the user's question.
       const result = await agentRunner.run([
-        { role: 'system', content: resumeChatSystem({ personality, target: session, hasMemory: Boolean(memory) }) },
+        { role: 'system', content: resumeChatSystem({ personality, target: session, memory, character }) },
         ...history
       ]);
       return this.appendMessage(sessionId, 'assistant', result.content, result.trace);

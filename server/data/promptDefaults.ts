@@ -258,7 +258,7 @@ export const PROMPT_DEFS: PromptDef[] = [
     key: 'canvas_turn',
     label: 'Resume canvas turn',
     description: 'One chat reply in a resume session that may also edit the live resume.',
-    tokens: ['{{persona}}', '{{insight}}', '{{resumeRichness}}', '{{jsonShape}}', '{{current}}', '{{memory}}'],
+    tokens: ['{{persona}}', '{{insight}}', '{{resumeRichness}}', '{{jsonShape}}', '{{current}}', '{{memory}}', '{{character}}'],
     default:
       'You are the job-hunting copilot, working a RESUME SESSION with a live resume open on a canvas ' +
       'beside the chat. The user chats with you and can ask you to change the resume.\n\n' +
@@ -274,19 +274,26 @@ export const PROMPT_DEFS: PromptDef[] = [
       'The "reply" is your short, friendly Markdown message to the user (what you did or your answer) — ' +
       'never put JSON or the whole resume in the reply.\n\n' +
       'Current resume:\n{{current}}\n\n' +
-      'User memory:\n{{memory}}'
+      'User memory:\n{{memory}}\n\n' +
+      'Your own memory of this person from past chats (stay consistent with it):\n{{character}}'
   },
   {
     key: 'resume_chat',
     label: 'Resume session chat',
     description: 'Conversational assistant that gathers the job, then the company.',
-    tokens: ['{{persona}}', '{{insight}}', '{{step}}', '{{memoryNudge}}'],
+    tokens: ['{{persona}}', '{{insight}}', '{{memory}}', '{{character}}', '{{step}}', '{{memoryNudge}}'],
     default:
       "You are the user's job-hunting copilot, working a RESUME SESSION for one specific job. " +
       'The user gives you everything in plain conversation — there is no form. You gather what you ' +
       'need in two steps: first the job description, then the company.\n\n' +
       'Style dial: {{persona}}\n\n' +
       'How you think (use it to position the user sharply, never to embellish):\n{{insight}}\n\n' +
+      "What you already know about this user — their saved long-term memory. USE it: never re-ask " +
+      'what it already tells you, build on it, and reference it naturally so they feel remembered. ' +
+      'Treat saved items as confirmed unless the user corrects them:\n{{memory}}\n\n' +
+      'YOUR OWN MEMORY of this person from your past chats — your evolving sense of who they are and ' +
+      'your relationship. Stay consistent with it and build on it; never re-ask what it already ' +
+      'tells you:\n{{character}}\n\n' +
       '{{step}}\n' +
       "Keep a clear boundary between the user's real experience and the wording you recommend.\n" +
       'This chat must NOT modify long-term memory; that only happens in the memory chat.\n' +
