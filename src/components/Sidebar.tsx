@@ -1,7 +1,8 @@
-import { Cat, FilePlus2, FileText, Gauge, Settings as SettingsIcon, Sparkles, Trash2, UserRound } from 'lucide-react';
+import { BookOpen, Briefcase, Gauge, Settings as SettingsIcon, Sparkles, Target, Trash2, UserRound } from 'lucide-react';
 import { useState } from 'react';
 import type { KeyboardEvent, MouseEvent } from 'react';
-import type { ResumeSession } from '../../shared/types.ts';
+import type { Personality, ResumeSession } from '../../shared/types.ts';
+import { personaVisual } from '../personaVisual.tsx';
 
 export type View = 'home' | 'copilot' | 'memory' | 'ats' | 'settings';
 
@@ -11,6 +12,7 @@ interface SidebarProps {
   view: View;
   hasApiKey: boolean;
   activeProfileName: string | null;
+  persona: Personality | null;
   onNewResume: () => void;
   onSelectView: (view: View) => void;
   onSelectSession: (id: string) => void;
@@ -18,21 +20,23 @@ interface SidebarProps {
   onDeleteSession: (id: string) => void;
 }
 
-// ChatGPT-style sidebar: a primary "New resume" action up top, the feature
-// shortcuts, the resume-session history in the middle, and settings pinned to
-// the bottom.
+// ChatGPT-style sidebar: a primary "New job hunt" action up top, the feature
+// shortcuts, the job-hunt history in the middle (each session is one job), and
+// settings pinned to the bottom.
 export default function Sidebar({
   sessions,
   activeSessionId,
   view,
   hasApiKey,
   activeProfileName,
+  persona,
   onNewResume,
   onSelectView,
   onSelectSession,
   onRenameSession,
   onDeleteSession
 }: SidebarProps) {
+  const brand = personaVisual(persona);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState('');
 
@@ -44,11 +48,11 @@ export default function Sidebar({
   function startRename(session: ResumeSession, event: MouseEvent): void {
     event.stopPropagation();
     setEditingId(session.id);
-    setTitleDraft(session.title || 'Untitled role');
+    setTitleDraft(session.title || 'Untitled job');
   }
 
   async function saveRename(id: string): Promise<void> {
-    const title = titleDraft.trim() || 'Untitled role';
+    const title = titleDraft.trim() || 'Untitled job';
     setEditingId(null);
     await onRenameSession(id, title);
   }
@@ -63,8 +67,8 @@ export default function Sidebar({
   return (
     <aside className="sidebar">
       <div className="sidebarBrand">
-        <span className="brandMark"><Cat size={18} /></span>
-        <span className="brandName">Sox</span>
+        <span className="brandMark" style={{ background: brand.gradient }}><brand.Icon size={18} /></span>
+        <span className="brandName">{persona?.name ?? 'Sox'}</span>
       </div>
 
       {activeProfileName && (
@@ -76,15 +80,15 @@ export default function Sidebar({
       )}
 
       <button className="newResume" onClick={onNewResume}>
-        <FilePlus2 size={17} /> New resume
+        <Target size={17} /> New job hunt
       </button>
 
       <nav className="sidebarNav">
         <button className={navActive('copilot') ? 'active' : ''} onClick={() => onSelectView('copilot')}>
-          <Sparkles size={16} /> Copilot chat
+          <Sparkles size={16} /> Chat
         </button>
         <button className={navActive('memory') ? 'active' : ''} onClick={() => onSelectView('memory')}>
-          <Cat size={16} /> Memory
+          <BookOpen size={16} /> Your story
         </button>
         <button className={navActive('ats') ? 'active' : ''} onClick={() => onSelectView('ats')}>
           <Gauge size={16} /> ATS analyzer
@@ -92,8 +96,8 @@ export default function Sidebar({
       </nav>
 
       <div className="sessionScroll">
-        <p className="sectionLabel">Resumes</p>
-        {sessions.length === 0 && <p className="sidebarEmpty">No resumes yet</p>}
+        <p className="sectionLabel">Job hunts</p>
+        {sessions.length === 0 && <p className="sidebarEmpty">No job hunts yet</p>}
         {sessions.map((s) => (
           <div
             key={s.id}
@@ -102,7 +106,7 @@ export default function Sidebar({
             className={`sessionRow ${activeSessionId === s.id ? 'active' : ''}`}
             onClick={() => onSelectSession(s.id)}
           >
-            <FileText size={15} />
+            <Briefcase size={15} />
             {editingId === s.id ? (
               <input
                 className="sidebarTitleInput"
@@ -115,7 +119,7 @@ export default function Sidebar({
               />
             ) : (
               <span className="sessionTitle" onDoubleClick={(e) => startRename(s, e)}>
-                {s.title || 'Untitled role'}
+                {s.title || 'Untitled job'}
               </span>
             )}
             <span className="rowDelete" onClick={(e) => remove(s.id, e)} aria-label="Delete">

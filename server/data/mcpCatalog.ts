@@ -9,7 +9,7 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   {
     id: 'filesystem',
     name: 'Filesystem',
-    description: 'Read, search, and write files within folders you allow. Great for working with local resumes and documents.',
+    description: 'Read, search, and write files within folders you allow — open old resumes, save tailored drafts and cover letters, and read job descriptions you have downloaded.',
     transport: 'stdio',
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-filesystem'],
@@ -39,7 +39,7 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   {
     id: 'brave-search',
     name: 'Brave Search',
-    description: 'Web and local search via the Brave Search API. Requires a free Brave Search API key.',
+    description: 'Research the job market on the web — find roles, size up companies and their funding/products, and look up hiring managers before you reach out. Requires a free Brave Search API key.',
     transport: 'stdio',
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-brave-search'],
@@ -51,7 +51,7 @@ export const MCP_CATALOG: McpCatalogEntry[] = [
   {
     id: 'github',
     name: 'GitHub',
-    description: 'Browse repos, read files, search code, and manage issues/PRs. Requires a GitHub personal access token.',
+    description: "Research a company's engineering by browsing its repos and code, or pull highlights from your own projects to back up your resume. Requires a GitHub personal access token.",
     transport: 'stdio',
     command: 'npx',
     args: ['-y', '@modelcontextprotocol/server-github'],

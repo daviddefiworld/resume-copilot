@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { Cat, PanelRightOpen, Wand2 } from 'lucide-react';
 import { api } from '../api.ts';
@@ -13,6 +13,10 @@ interface SessionViewProps {
   templates: Template[];
   onSessionChanged: () => void;
   onOpenAts: (prefill: ATSPrefill) => void;
+  // The first message of a freshly created session, not yet sent. When present,
+  // SessionView renders it optimistically and sends it on mount.
+  initialMessage?: string | null;
+  onInitialMessageSent?: () => void;
 }
 
 interface ResumeVersionState {
@@ -26,7 +30,7 @@ const TEMPLATE_KEY = 'resumeTemplate';
 // One resume session as a plain conversation. The user gives the job in chat —
 // no forms. Sox asks for what it needs; the resume artifact opens in a side
 // panel once a draft exists.
-export default function SessionView({ sessionId, templates, onSessionChanged, onOpenAts }: SessionViewProps) {
+export default function SessionView({ sessionId, templates, onSessionChanged, onOpenAts, initialMessage, onInitialMessageSent }: SessionViewProps) {
   const [session, setSession] = useState<ResumeSession | null>(null);
   const [messages, setMessages] = useState<ResumeMessage[]>([]);
   const [versions, setVersions] = useState<ResumeVersionState>({ list: [], selectedId: null });
@@ -35,10 +39,22 @@ export default function SessionView({ sessionId, templates, onSessionChanged, on
   const [titleDraft, setTitleDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Guards the first-message send against StrictMode's double-invoked mount
+  // effect, which would otherwise send (and persist) the message twice.
+  const sentInitial = useRef(false);
 
   useEffect(() => {
     setError('');
     api.getSession(sessionId).then(setSession).catch((e: Error) => setError(e.message));
+    // Brand-new session: the first message hasn't been sent yet. Send it here so
+    // it renders immediately (optimistically) and Sox's reply lands in the thread
+    // — rather than the user staring at a blank pane while the agent works.
+    if (initialMessage && !sentInitial.current) {
+      sentInitial.current = true;
+      onInitialMessageSent?.();
+      void send(initialMessage);
+      return;
+    }
     api.getSessionMessages(sessionId).then(setMessages).catch(() => {});
     api.getVersions(sessionId).then((list) => {
       setVersions({ list, selectedId: list[list.length - 1]?.id ?? null });
@@ -58,7 +74,7 @@ export default function SessionView({ sessionId, templates, onSessionChanged, on
 
   async function saveTitle(): Promise<void> {
     if (!session) return;
-    const title = titleDraft.trim() || 'Untitled role';
+    const title = titleDraft.trim() || 'Untitled job';
     setIsEditingTitle(false);
     setSession(await api.updateSession(sessionId, { title }));
     onSessionChanged();
@@ -66,7 +82,7 @@ export default function SessionView({ sessionId, templates, onSessionChanged, on
 
   function editTitle(): void {
     if (!session) return;
-    setTitleDraft(session.title || 'Untitled role');
+    setTitleDraft(session.title || 'Untitled job');
     setIsEditingTitle(true);
   }
 
@@ -166,7 +182,7 @@ export default function SessionView({ sessionId, templates, onSessionChanged, on
             />
           ) : (
             <div className="paneTitle editableTitle" onDoubleClick={editTitle}>
-              {session.title || 'New resume'}
+              {session.title || 'New job hunt'}
             </div>
           )}
           <span className="paneSub">{subtitle}</span>

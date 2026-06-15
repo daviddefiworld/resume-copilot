@@ -1,5 +1,7 @@
 import type {
   ATSReport,
+  CharacterMemoryView,
+  CopilotConfig,
   McpCatalogEntry,
   McpServerInput,
   McpServerStatus,
@@ -109,6 +111,22 @@ export const api = {
   saveSettings: (body: { apiKey?: string; model?: string; model2?: string }) =>
     request<SettingsView>('/settings', { method: 'POST', body }),
   getPersonalities: () => request<Personality[]>('/personalities'),
+  createPersonality: (body: Partial<Personality> & { name: string }) =>
+    request<Personality>('/personalities', { method: 'POST', body }),
+  updatePersonality: (id: string, body: Partial<Personality> & { name: string }) =>
+    request<Personality>(`/personalities/${id}`, { method: 'PATCH', body }),
+  // Restore a built-in personality (e.g. Sox) to the version shipped in code.
+  resetPersonality: (id: string) => request<Personality>(`/personalities/${id}/reset`, { method: 'POST' }),
+  deletePersonality: (id: string) => request<{ ok: true }>(`/personalities/${id}`, { method: 'DELETE' }),
+  // What a character remembers about the user (active profile). Read-only here;
+  // the chat evolves it automatically.
+  getCharacterMemory: (id: string) => request<CharacterMemoryView>(`/personalities/${id}/memory`),
+  clearCharacterMemory: (id: string) =>
+    request<{ ok: true }>(`/personalities/${id}/memory`, { method: 'DELETE' }),
+  // Which personality drives the copilot chat.
+  getCopilot: () => request<CopilotConfig>('/copilot'),
+  setCopilotPersonality: (personalityId: string) =>
+    request<CopilotConfig>('/copilot', { method: 'PUT', body: { personalityId } }),
   getTemplates: () => request<Template[]>('/templates'),
 
   // Profiles — each has its own isolated memory and resume sessions.

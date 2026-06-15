@@ -1,4 +1,4 @@
-import { Cat, FilePlus2, Sparkles } from 'lucide-react';
+import { Cat, Sparkles, Target } from 'lucide-react';
 
 interface HomeProps {
   onNewResume: () => void;
@@ -12,19 +12,19 @@ export default function Home({ onNewResume, onCopilot }: HomeProps) {
     <div className="pane">
       <div className="home">
         <div className="greetingMark"><Cat size={34} /></div>
-        <h1>Let's build a resume that's actually you.</h1>
-        <p>Sox learns your real experience once, then tailors a truthful resume to every job —
-          no fabrication, no keyword stuffing.</p>
+        <h1>Your copilot for the whole job hunt.</h1>
+        <p>Sox learns your real experience once, then helps you target the right roles, reach the
+          right people, and tailor a truthful resume to every job — no fabrication, no keyword stuffing.</p>
         <div className="homeCards">
           <button className="homeCard" onClick={onNewResume}>
-            <FilePlus2 size={22} />
-            <strong>New resume</strong>
-            <span>Paste a job description and tailor a draft from your memory.</span>
+            <Target size={22} />
+            <strong>New job hunt</strong>
+            <span>Open a workspace for one job — research it, reach out, and tailor a resume.</span>
           </button>
           <button className="homeCard" onClick={onCopilot}>
             <Sparkles size={22} />
-            <strong>Chat with Sox</strong>
-            <span>Tell your copilot about your work to build long-term memory.</span>
+            <strong>Chat with your copilot</strong>
+            <span>Tell it about your work, scout roles and companies, and plan your outreach.</span>
           </button>
         </div>
       </div>

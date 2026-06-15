@@ -1,16 +1,22 @@
 import { useEffect, useState } from 'react';
-import { FileText, KeyRound, Plug, Save, SlidersHorizontal, UserRound } from 'lucide-react';
+import { FileText, KeyRound, Plug, Save, SlidersHorizontal, Sparkles, UserRound } from 'lucide-react';
 import type { FormEvent } from 'react';
 import { api } from '../api.ts';
 import PromptsSettings from '../components/PromptsSettings.tsx';
 import ProfilesSettings from '../components/ProfilesSettings.tsx';
+import PersonalitySettings from '../components/PersonalitySettings.tsx';
 import McpSettings from '../components/McpSettings.tsx';
-import type { Profile, SettingsView } from '../../shared/types.ts';
+import type { Personality, Profile, SettingsView } from '../../shared/types.ts';
 
-type Tab = 'general' | 'profiles' | 'tools' | 'prompts';
+type Tab = 'general' | 'profiles' | 'personality' | 'tools' | 'prompts';
 
 interface SettingsProps {
   onChange?: (s: SettingsView) => void;
+  // The shared persona state lives in the app shell so the grid here always
+  // matches the live copilot — no independent fetch that can drift out of sync.
+  personas: Personality[];
+  activePersonaId: string;
+  onPersonaChange: () => Promise<void>;
   profiles: Profile[];
   activeProfileId: string | null;
   onCreateProfile: (name: string) => Promise<void>;
@@ -24,6 +30,9 @@ interface SettingsProps {
 // frontend only ever learns whether one is set.
 export default function Settings({
   onChange,
+  personas,
+  activePersonaId,
+  onPersonaChange,
   profiles,
   activeProfileId,
   onCreateProfile,
@@ -70,9 +79,11 @@ export default function Settings({
       ? 'Your API key is stored on the server, never sent back to the browser.'
       : tab === 'profiles'
         ? 'Each profile keeps its own memory and resumes. Switch the active one here.'
-        : tab === 'tools'
-          ? 'Install MCP servers to give Sox real tools — filesystem, web search, and more.'
-          : 'Edit the system prompts that drive Sox. Changes take effect immediately.';
+        : tab === 'personality'
+          ? 'Choose which AI copilot personality drives your chat — or create your own.'
+          : tab === 'tools'
+            ? 'Install MCP servers to give your copilot real tools — research, files, email, and more.'
+            : 'Edit the system prompts that drive your copilot. Changes take effect immediately.';
 
   return (
     <div className="pane">
@@ -87,6 +98,9 @@ export default function Settings({
         <nav className="settingsNav">
           <button className={tab === 'profiles' ? 'on' : ''} onClick={() => setTab('profiles')}>
             <UserRound size={16} /> Profiles
+          </button>
+          <button className={tab === 'personality' ? 'on' : ''} onClick={() => setTab('personality')}>
+            <Sparkles size={16} /> Personality
           </button>
           <button className={tab === 'general' ? 'on' : ''} onClick={() => setTab('general')}>
             <SlidersHorizontal size={16} /> General
@@ -108,6 +122,12 @@ export default function Settings({
             onActivate={onActivateProfile}
             onRename={onRenameProfile}
             onDelete={onDeleteProfile}
+          />
+        ) : tab === 'personality' ? (
+          <PersonalitySettings
+            personas={personas}
+            activeId={activePersonaId}
+            onChanged={onPersonaChange}
           />
         ) : tab === 'general' ? (
           <form className="settingsForm" onSubmit={save}>

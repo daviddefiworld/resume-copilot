@@ -35,6 +35,14 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// A clear authentication failure is not a transport mismatch, so it must not be
+// masked by silently retrying over a different transport. Used to decide whether
+// the Streamable→SSE fallback should fire or rethrow the real error.
+function isAuthError(error: unknown): boolean {
+  const message = errorMessage(error);
+  return /\b(401|403)\b/.test(message) || /unauthor|forbidden/i.test(message);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -119,7 +127,24 @@ class McpManager {
   // Last-known status for a server (after a connect or a Test). "Not connected"
   // until something has tried.
   statusOf(id: string): McpServerStatus {
-    return this.statusById.get(id) ?? { connected: false, toolCount: 0, tools: [], error: null };
+    return this.statusById.get(id) ?? { connected: false, toolCount: 0, tools: [], error: null, instructions: null };
+  }
+
+  // The server-level usage guidance (MCP `instructions`) of every enabled,
+  // connected server, concatenated into one labelled block for the agent's
+  // system prompt. Each server is capped so one can't dominate the prompt (and to
+  // bound a prompt-injection blast radius). '' when no connected server sent any.
+  // Reads the status populated by loadTools(), so call listTools() first.
+  instructionsText(): string {
+    const PER_SERVER_CAP = 4000;
+    const blocks: string[] = [];
+    for (const server of mcpRepository.list().filter((s) => s.enabled)) {
+      const text = this.statusById.get(server.id)?.instructions;
+      if (!text) continue;
+      const clipped = text.length > PER_SERVER_CAP ? `${text.slice(0, PER_SERVER_CAP)}\n…(truncated)` : text;
+      blocks.push(`Guidance from tool server "${server.name}":\n${clipped}`);
+    }
+    return blocks.join('\n\n');
   }
 
   // Drop a live connection (on delete/update). Closing also kills a stdio child.
@@ -143,6 +168,10 @@ class McpManager {
     try {
       const client = await this.connect(server);
       const { tools } = await client.listTools();
+      // Server-level usage guidance sent on initialize. Most clients ignore this;
+      // forwarding it is what lets a server teach the agent how to use its tools
+      // together without the agent hard-coding any knowledge of the server.
+      const instructions = client.getInstructions()?.trim() || null;
       const defs: OpenAITool[] = tools.map((tool) => {
         const name = qualify(server.name, tool.name);
         this.route.set(name, { serverId: server.id, serverName: server.name, original: tool.name });
@@ -155,12 +184,13 @@ class McpManager {
         connected: true,
         toolCount: tools.length,
         tools: tools.map((t) => t.name),
-        error: null
+        error: null,
+        instructions
       });
       return defs;
     } catch (error) {
       await this.disconnect(server.id);
-      this.statusById.set(server.id, { connected: false, toolCount: 0, tools: [], error: errorMessage(error) });
+      this.statusById.set(server.id, { connected: false, toolCount: 0, tools: [], error: errorMessage(error), instructions: null });
       return [];
     }
   }
@@ -195,7 +225,11 @@ class McpManager {
         const client = new Client({ name: 'sox-agent', version: '1.0.0' });
         await client.connect(new StreamableHTTPClientTransport(url, init));
         return client;
-      } catch {
+      } catch (error) {
+        // Only fall back to the older HTTP+SSE transport for a genuine transport
+        // mismatch. A 401/403 means the auth header is wrong, not the transport —
+        // rethrow it so the user sees the real reason instead of a generic SSE error.
+        if (isAuthError(error)) throw error;
         const client = new Client({ name: 'sox-agent', version: '1.0.0' });
         await client.connect(new SSEClientTransport(url, init));
         return client;

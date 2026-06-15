@@ -4,7 +4,8 @@ import { api } from '../api.ts';
 import type { MemoryItemFields } from '../api.ts';
 import type { Confidence, MemoryItem } from '../../shared/types.ts';
 
-// View and manually edit the long-term memory Sox has saved, grouped by category.
+// "Your story" — view and manually edit the long-term memory the copilot has
+// saved about the user, grouped by category.
 export default function MemoryProfile({ refreshKey }: { refreshKey: number }) {
   const [items, setItems] = useState<MemoryItem[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
@@ -42,15 +43,15 @@ export default function MemoryProfile({ refreshKey }: { refreshKey: number }) {
     <div className="pane">
       <header className="paneHeader">
         <div className="sessionHead">
-          <div className="paneTitle">Memory</div>
-          <span className="paneSub">What Sox knows about you. Edit or delete anything that's off.</span>
+          <div className="paneTitle">Your story</div>
+          <span className="paneSub">What your copilot knows about you. Edit or delete anything that's off.</span>
         </div>
       </header>
 
       <div className="paneScroll">
         <div className="centerColumn">
           {error && <p className="error">{error}</p>}
-          {items.length === 0 && <p className="hint">No memory yet. Chat with Sox to build it.</p>}
+          {items.length === 0 && <p className="hint">Nothing here yet. Chat with your copilot to build it.</p>}
 
           {Object.entries(groups).map(([category, list]) => (
             <section key={category} className="memoryGroup">

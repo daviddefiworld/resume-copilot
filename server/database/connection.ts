@@ -159,6 +159,17 @@ class Connection {
         created_at     TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS character_memory (
+        profile_id      TEXT NOT NULL,
+        personality_id  TEXT NOT NULL,
+        summary         TEXT NOT NULL DEFAULT '',
+        notes           TEXT NOT NULL DEFAULT '',
+        message_count   INTEGER NOT NULL DEFAULT 0,
+        reflected_count INTEGER NOT NULL DEFAULT 0,
+        updated_at      TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (profile_id, personality_id)
+      );
+
       CREATE TABLE IF NOT EXISTS mcp_servers (
         id         TEXT PRIMARY KEY,
         name       TEXT NOT NULL,

@@ -11,7 +11,7 @@ import Settings from './views/Settings.tsx';
 import Home from './views/Home.tsx';
 import ATSAnalyzer from './views/ATSAnalyzer.tsx';
 import ProfileSetup from './components/ProfileSetup.tsx';
-import type { Profile, ProfilesView, ResumeSession, Template } from '../shared/types.ts';
+import type { Personality, Profile, ProfilesView, ResumeSession, Template } from '../shared/types.ts';
 
 export interface ATSPrefill {
   resume: string;
@@ -24,6 +24,9 @@ export default function App() {
   const [view, setView] = useState<View>('home');
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isStartingResume, setIsStartingResume] = useState(false);
+  // The first message of a brand-new job hunt, handed to its SessionView to send
+  // (scoped to the session it belongs to) so the message renders immediately.
+  const [pendingMessage, setPendingMessage] = useState<{ sessionId: string; content: string } | null>(null);
   const [sessions, setSessions] = useState<ResumeSession[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [memoryKey, setMemoryKey] = useState(0);
@@ -37,9 +40,19 @@ export default function App() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [needProfile, setNeedProfile] = useState(false);
+  // The copilot personality drives the brand mark, chat avatar, and name. Owned
+  // here so changing it in Settings updates the whole shell live.
+  const [personas, setPersonas] = useState<Personality[]>([]);
+  const [personaId, setPersonaId] = useState<string>('');
 
   const loadSessions = useCallback(async () => {
     setSessions(await api.getSessions());
+  }, []);
+
+  const loadPersona = useCallback(async () => {
+    const [cfg, people] = await Promise.all([api.getCopilot(), api.getPersonalities()]);
+    setPersonas(people);
+    setPersonaId(cfg.personalityId);
   }, []);
 
   useEffect(() => {
@@ -51,7 +64,10 @@ export default function App() {
       setNeedProfile(p.profiles.length === 0);
     }).catch(() => {});
     loadSessions().catch(() => {});
-  }, [loadSessions]);
+    loadPersona().catch(() => {});
+  }, [loadSessions, loadPersona]);
+
+  const activePersona = personas.find((p) => p.id === personaId) ?? personas[0] ?? null;
 
   // Sync local profile state after any change. When the active profile changes
   // (`switched`), reset the session view and refresh sessions + memory so the
@@ -93,9 +109,13 @@ export default function App() {
   }
 
   async function startResume(content: string): Promise<void> {
+    // Open the workspace (no AI yet) and jump straight into it, handing the first
+    // message to the session. SessionView shows it immediately and Sox replies
+    // there — instead of blocking on the agent here and landing on a finished
+    // thread where the message only appears alongside the reply.
     const session = await api.createSession({ initial_message: content });
-    await api.sendSessionMessage(session.id, content);
     await loadSessions();
+    setPendingMessage({ sessionId: session.id, content });
     setIsStartingResume(false);
     setActiveSessionId(session.id);
   }
@@ -147,6 +167,7 @@ export default function App() {
         view={view}
         hasApiKey={hasApiKey}
         activeProfileName={activeProfile?.name ?? null}
+        persona={activePersona}
         onNewResume={newResume}
         onSelectView={selectView}
         onSelectSession={selectSession}
@@ -162,11 +183,13 @@ export default function App() {
             templates={templates}
             onSessionChanged={loadSessions}
             onOpenAts={openAts}
+            initialMessage={pendingMessage?.sessionId === activeSessionId ? pendingMessage.content : null}
+            onInitialMessageSent={() => setPendingMessage(null)}
           />
         ) : isStartingResume ? (
           <NewResumeStart onSend={startResume} />
         ) : view === 'copilot' ? (
-          <CopilotChat key={activeProfileId ?? 'none'} onMemorySaved={() => setMemoryKey((k) => k + 1)} />
+          <CopilotChat key={activeProfileId ?? 'none'} persona={activePersona} onMemorySaved={() => setMemoryKey((k) => k + 1)} />
         ) : view === 'memory' ? (
           <MemoryProfile key={activeProfileId ?? 'none'} refreshKey={memoryKey} />
         ) : view === 'ats' ? (
@@ -174,6 +197,9 @@ export default function App() {
         ) : view === 'settings' ? (
           <Settings
             onChange={(s) => setHasApiKey(s.hasApiKey)}
+            personas={personas}
+            activePersonaId={personaId}
+            onPersonaChange={loadPersona}
             profiles={profiles}
             activeProfileId={activeProfileId}
             onCreateProfile={createProfile}
@@ -210,8 +236,9 @@ function NewResumeStart({ onSend }: { onSend: (content: string) => Promise<void>
   const emptyState = (
     <div className="greeting">
       <div className="greetingMark"><Cat size={28} /></div>
-      <h1>What are we applying to?</h1>
-      <p>Paste the job description or describe the role. Sox will create the resume chat from this first message.</p>
+      <h1>What job are we hunting?</h1>
+      <p>Paste the job description or describe the role. Your copilot opens a workspace for this one
+        job — research, outreach, and a tailored resume all live here.</p>
     </div>
   );
 
@@ -219,7 +246,7 @@ function NewResumeStart({ onSend }: { onSend: (content: string) => Promise<void>
     <div className="pane">
       <header className="paneHeader">
         <div className="sessionHead">
-          <div className="paneTitle">New resume</div>
+          <div className="paneTitle">New job hunt</div>
           <span className="paneSub">Start with the role, company, or job description</span>
         </div>
       </header>
@@ -230,9 +257,9 @@ function NewResumeStart({ onSend }: { onSend: (content: string) => Promise<void>
         busy={busy}
         assistantName="Sox"
         assistantAvatar={<Cat size={16} />}
-        placeholder="Message Sox about the job..."
+        placeholder="Tell your copilot about the job..."
         emptyState={emptyState}
-        disclaimer="Your first message creates the resume chat and names it automatically."
+        disclaimer="Your first message opens the job-hunt workspace and names it automatically."
       />
     </div>
   );

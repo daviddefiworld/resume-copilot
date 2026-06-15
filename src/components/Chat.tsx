@@ -20,6 +20,9 @@ interface ChatProps {
   placeholder?: string;
   assistantName?: string;
   assistantAvatar?: ReactNode;
+  // CSS background for the assistant avatar — lets each personality colour its
+  // own avatar. Falls back to the app accent when absent.
+  personaGradient?: string;
   emptyState?: ReactNode;
   actions?: ReactNode;
   disclaimer?: string;
@@ -35,10 +38,14 @@ export default function Chat({
   placeholder,
   assistantName = 'Sox',
   assistantAvatar,
+  personaGradient,
   emptyState,
   actions,
   disclaimer
 }: ChatProps) {
+  // Per-personality avatar colour, applied via a CSS variable so the message
+  // avatars and typing indicator all pick it up.
+  const avatarStyle = personaGradient ? { background: personaGradient } : undefined;
   const [text, setText] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -77,15 +84,21 @@ export default function Chat({
       <form className="composer" onSubmit={submit}>
         <textarea
           ref={inputRef}
+          className="composerInput"
           value={text}
           rows={1}
           placeholder={placeholder || 'Message Sox…'}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
         />
-        <button type="submit" className="sendBtn" disabled={busy || !text.trim()} aria-label="Send">
-          <ArrowUp size={18} />
-        </button>
+        <div className="composerBar">
+          <span className="composerKbd">
+            <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line
+          </span>
+          <button type="submit" className="sendBtn" disabled={busy || !text.trim()} aria-label="Send">
+            <ArrowUp size={18} />
+          </button>
+        </div>
       </form>
       {disclaimer && <p className="composerNote">{disclaimer}</p>}
     </div>
@@ -118,7 +131,7 @@ export default function Chat({
               </div>
             ) : (
               <div key={m.id} className="turn assistant">
-                <div className="avatar">{assistantAvatar}</div>
+                <div className="avatar" style={avatarStyle}>{assistantAvatar}</div>
                 <div className="turnBody">
                   <div className="turnName">{assistantName}</div>
                   <ToolTrace entries={m.tool_trace} />
@@ -129,7 +142,7 @@ export default function Chat({
           )}
           {busy && (
             <div className="turn assistant">
-              <div className="avatar">{assistantAvatar}</div>
+              <div className="avatar" style={avatarStyle}>{assistantAvatar}</div>
               <div className="turnBody">
                 <div className="turnName">{assistantName}</div>
                 <div className="typing"><span /><span /><span /></div>

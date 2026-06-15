@@ -14,12 +14,17 @@ import type {
 
 const GUARDRAILS = (): string => promptsService.get('guardrails');
 const RESUME_RICHNESS = (): string => promptsService.get('resume_richness');
+const INSIGHT = (): string => promptsService.get('insight');
+const MISSION = (): string => promptsService.get('mission');
 
 function personaLine(p: Personality): string {
+  const essence = p.essence ? `Who you are: ${p.essence} ` : '';
+  const mission = p.mission ? `Your pledge to them, in your own voice: "${p.mission}" ` : '';
   return (
-    `You are "${p.name}". Tone: ${p.tone}. Critique intensity: ${p.critiqueIntensity}. ` +
+    `You are "${p.name}". ${essence}${mission}` +
+    `Tone: ${p.tone}. Critique intensity: ${p.critiqueIntensity}. ` +
     `Reasoning style: ${p.reasoningStyle}. Resume bias: ${p.resumeBias}. ` +
-    'Your personality shapes how you communicate, not the facts. ' +
+    'Stay fully in character, but your personality shapes how you communicate, not the facts. ' +
     'Personality must never encourage exaggeration, fabrication, or manipulative claims.'
   );
 }
@@ -53,13 +58,42 @@ const MEMORY_CATEGORIES = [
 ];
 
 // --- Memory chat: interview the user to build long-term career memory. The
-// already-saved memory is injected so Sox builds on it instead of re-asking. ---
-export function memoryInterviewSystem(personality: Personality, memory: string): string {
+// already-saved memory is injected so Sox builds on it instead of re-asking.
+// `character` is this personality's own evolving sense of the user (its private
+// notes + a recap of the conversation), so it stays in character and builds on
+// the relationship across sessions. ---
+export function memoryInterviewSystem(personality: Personality, memory: string, character: string): string {
   return fill(promptsService.get('memory_interview'), {
     persona: personaLine(personality),
+    mission: MISSION(),
     memory: memory || '(nothing saved yet — this is the start of their memory)',
+    character: character || '(this is early in your relationship — you are still getting to know them)',
+    insight: INSIGHT(),
     guardrails: GUARDRAILS()
   });
+}
+
+// --- Character reflection: after a conversation grows long, fold the transcript
+// into this character's running recap and its durable, evolving notes about the
+// user. Runs on the higher-accuracy model and returns JSON. ---
+export function characterReflectionPrompt(input: {
+  personality: Personality;
+  transcript: string;
+  priorSummary: string;
+  priorNotes: string;
+}): ChatMessage[] {
+  const { personality, transcript, priorSummary, priorNotes } = input;
+  return [
+    {
+      role: 'system',
+      content: fill(promptsService.get('character_reflection'), {
+        persona: personaLine(personality),
+        priorSummary: priorSummary || '(no recap yet)',
+        priorNotes: priorNotes || '(no notes yet)'
+      })
+    },
+    { role: 'user', content: `Conversation so far:\n\n${transcript}` }
+  ];
 }
 
 // --- Memory extraction: pull candidate memory items from recent conversation,
@@ -107,6 +141,7 @@ export function resumeDraftPrompt(input: {
       role: 'system',
       content: fill(promptsService.get('resume_draft'), {
         persona: personaLine(personality),
+        insight: INSIGHT(),
         resumeRichness: RESUME_RICHNESS(),
         jsonShape: RESUME_CONTENT_SHAPE
       }) + '\n\n' + PAGE_LENGTH_GUIDANCE
@@ -130,6 +165,7 @@ export function resumeCanvasTurnSystem(input: {
   const { personality, current, memory } = input;
   return fill(promptsService.get('canvas_turn'), {
     persona: personaLine(personality),
+    insight: INSIGHT(),
     resumeRichness: RESUME_RICHNESS(),
     jsonShape: RESUME_CONTENT_SHAPE,
     current: JSON.stringify(current, null, 2),
@@ -168,6 +204,7 @@ export function resumeChatSystem(input: {
       'the Copilot chat first, so the draft has something to build on.\n';
   return fill(promptsService.get('resume_chat'), {
     persona: personaLine(personality),
+    insight: INSIGHT(),
     step,
     memoryNudge
   });

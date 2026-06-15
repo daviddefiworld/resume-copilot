@@ -2,11 +2,11 @@ import { randomUUID } from 'crypto';
 import { resumeRepository } from '../repositories/resumeRepository.ts';
 import type { RawSession, RawVersion } from '../repositories/resumeRepository.ts';
 import { openRouter } from './openRouterService.ts';
-import { agentRunner } from './agentRunner.ts';
+import { agentRunner, historyWithToolContext } from './agentRunner.ts';
 import { settingsService } from './settingsService.ts';
 import { memoryService } from './memoryService.ts';
 import { profileService } from './profileService.ts';
-import { getPersonality } from '../data/personalities.ts';
+import { personalityService } from './personalityService.ts';
 import { getTemplate } from '../data/templates.ts';
 import {
   jobAnalysisPrompt,
@@ -99,7 +99,7 @@ class ResumeService {
       id: randomUUID(),
       profile_id: profileId,
       title: String(input.title || input.job_title || initialTitle).trim(),
-      personality_id: input.personality_id || 'strategic_minimalist',
+      personality_id: input.personality_id || 'sox',
       company_name: String(input.company_name || '').trim(),
       job_title: String(input.job_title || '').trim(),
       job_description: String(input.job_description || '').trim(),
@@ -162,9 +162,9 @@ class ResumeService {
 
     this.appendMessage(sessionId, 'user', text);
 
-    const personality = getPersonality(session.personality_id);
+    const personality = personalityService.get(session.personality_id);
     const memory = memoryService.buildMemoryText(session.profile_id || profileService.activeId() || '');
-    const history = this.listMessages(sessionId).map((m) => ({ role: m.role, content: m.content }));
+    const history = historyWithToolContext(this.listMessages(sessionId));
     const latest = resumeRepository.getLatestVersion(sessionId);
 
     // No draft yet → plain conversation (asks for the job, then the company).
@@ -271,7 +271,7 @@ class ResumeService {
       await this.analyzeJob(sessionId);
       session = this.getSession(sessionId); // refresh with the extracted target + analysis
     }
-    const personality = getPersonality(session.personality_id);
+    const personality = personalityService.get(session.personality_id);
     // The resume content itself uses the final-resume model (falls back to primary).
     const draft = await openRouter.json<ResumeDraft>(
       resumeDraftPrompt({ personality, analysis: session.analysis as JobAnalysis, memory, target: session }),

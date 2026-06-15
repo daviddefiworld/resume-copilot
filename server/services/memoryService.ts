@@ -1,10 +1,11 @@
 import { randomUUID } from 'crypto';
 import { memoryRepository } from '../repositories/memoryRepository.ts';
 import { openRouter } from './openRouterService.ts';
-import { agentRunner } from './agentRunner.ts';
+import { agentRunner, historyWithToolContext } from './agentRunner.ts';
 import { settingsService } from './settingsService.ts';
 import { profileService } from './profileService.ts';
-import { getPersonality } from '../data/personalities.ts';
+import { personalityService } from './personalityService.ts';
+import { characterMemoryService } from './characterMemoryService.ts';
 import { memoryInterviewSystem, memoryExtractionPrompt } from './prompts.ts';
 import type { ChatRole, MemoryItem, MemoryMessage, MemoryProposal, ToolTraceEntry } from '../../shared/types.ts';
 
@@ -31,8 +32,12 @@ class MemoryService {
 
   // Restart the chat: wipe the transcript for the active profile. Confirmed
   // memory items are deliberately left intact — only the conversation resets.
+  // Each character's conversation recap is cleared too, but its durable notes
+  // about the user persist, so the copilot still remembers them next time.
   clearMessages(): void {
-    memoryRepository.deleteMessages(this.requireActiveProfile());
+    const profileId = this.requireActiveProfile();
+    memoryRepository.deleteMessages(profileId);
+    characterMemoryService.onConversationCleared(profileId);
   }
 
   // Append the user's message, generate the agent's reply, store and return it.
@@ -43,20 +48,40 @@ class MemoryService {
     const profileId = this.requireActiveProfile();
     this.append('user', text, profileId);
 
-    const personality = getPersonality(personalityId);
+    const personality = personalityService.get(personalityId);
     // Give Sox the profile's saved memory so it builds on what it already knows
     // instead of re-asking. Read-only here — memory is still written only via the
     // confirm/extract flow.
     const memory = this.buildMemoryText(profileId);
-    const history = memoryRepository.listMessages(profileId).map((m) => ({ role: m.role, content: m.content }));
+    // The character's own evolving memory of this user (private notes + a recap
+    // of the conversation so far), so it stays in character across sessions.
+    const character = characterMemoryService.contextText(profileId, personality.id);
+
+    // Once the chat runs long, lean on the character's recap and send only the
+    // most recent messages verbatim, so a long conversation stays in a sane
+    // context window instead of growing without bound.
+    const allMessages = memoryRepository.listMessages(profileId);
+    const windowed =
+      allMessages.length > characterMemoryService.summarizeAfter() &&
+      characterMemoryService.hasRecap(profileId, personality.id)
+        ? allMessages.slice(-characterMemoryService.recentWindow())
+        : allMessages;
+    const history = historyWithToolContext(windowed);
+
     // Run as an agent so Sox can use any installed MCP tools mid-interview. The
     // interview/guardrail instructions stay in the system prompt unchanged.
     const result = await agentRunner.run([
-      { role: 'system', content: memoryInterviewSystem(personality, memory) },
+      { role: 'system', content: memoryInterviewSystem(personality, memory, character) },
       ...history
     ]);
 
-    return this.append('assistant', result.content, profileId, result.trace);
+    const reply = this.append('assistant', result.content, profileId, result.trace);
+
+    // Let the character reflect on the conversation so its memory evolves. Runs
+    // only when the chat has grown enough; failures never affect the reply.
+    await characterMemoryService.maybeReflect(profileId, personality, memoryRepository.listMessages(profileId));
+
+    return reply;
   }
 
   private append(role: ChatRole, content: string, profileId: string, trace?: ToolTraceEntry[]): MemoryMessage {

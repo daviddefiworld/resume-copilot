@@ -46,6 +46,46 @@ export interface Personality {
   critiqueIntensity: string;
   reasoningStyle: string;
   resumeBias: string;
+  // True for the built-in presets shipped with the app; false/absent for
+  // personalities the user created. Only custom ones can be edited or deleted.
+  builtin?: boolean;
+  // Which fictional AI copilot (or none) the preset is modelled on — shown as a
+  // small caption in the picker. Purely cosmetic.
+  inspiration?: string;
+  // A deep characterization woven into the chat system prompt: who this
+  // character is, how they see the world, and how they relate to the user — so
+  // they read as a real personality with a point of view, not a generic bot.
+  // Optional; custom personalities lean on tone/reasoning instead. Like every
+  // other personality field, essence shapes VOICE only, never the guardrails.
+  essence?: string;
+  // The character's personal pledge to the user, in their own voice — the same
+  // shared mission (land a great remote software-development job) stated the way
+  // THIS character would. Shown in the chat greeting and the picker, and woven
+  // into the prompt so the copilot reads as a committed ally, not a Q&A bot.
+  mission?: string;
+  // Visual identity, so the copilot's brand mark and chat avatar take on the
+  // personality's feel. `icon` is a key into the frontend icon registry (e.g.
+  // 'cat', 'shield'); `accent` is a hex colour used for the mark's gradient.
+  // Both optional — the UI falls back to a default robot + a colour from the id.
+  icon?: string;
+  accent?: string;
+}
+
+// The user's copilot configuration: which personality drives the main chat.
+export interface CopilotConfig {
+  personalityId: string;
+}
+
+// What a single character has come to know, for the active profile. `notes` is
+// the character's own evolving sense of the user (durable across chat
+// restarts); `summary` is a running recap of the current conversation (reset
+// when the chat is restarted). Surfaced read-only in Settings → Personality.
+export interface CharacterMemoryView {
+  personalityId: string;
+  notes: string;
+  summary: string;
+  messageCount: number;
+  updatedAt: string | null;
 }
 
 export interface Template {
@@ -299,6 +339,11 @@ export interface McpServerStatus {
   toolCount: number;
   tools: string[];
   error: string | null;
+  // Server-level usage guidance returned on `initialize` (the MCP `instructions`
+  // field). A server uses it to teach a generic client how to use its tools
+  // together; we forward it to the model. null when the server sends none, or
+  // before the first successful connect.
+  instructions: string | null;
 }
 
 export interface McpServerView extends McpServer {

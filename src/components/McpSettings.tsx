@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, ClipboardPaste, Plug, Plus, RefreshCw, Trash2, Wrench } from 'lucide-react';
+import { Check, ClipboardPaste, Pencil, Plug, Plus, RefreshCw, Trash2, Wrench, X } from 'lucide-react';
 import { api } from '../api.ts';
 import type { McpCatalogEntry, McpServerInput, McpServerView, McpTransport } from '../../shared/types.ts';
 
@@ -19,11 +19,16 @@ const JSON_PLACEHOLDER = `{
 // Settings → Tools. Install MCP servers (from a catalog or by hand) and manage
 // the ones you have. Whatever is enabled here becomes tools the chat agent can
 // call. The API key and connections live on the server; this view only configures.
+type AddTab = 'catalog' | 'paste' | 'local' | 'remote';
+
 export default function McpSettings() {
   const [servers, setServers] = useState<McpServerView[]>([]);
   const [catalog, setCatalog] = useState<McpCatalogEntry[]>([]);
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Every way to add a tool — catalog, pasted JSON, and the manual local/remote
+  // forms — lives behind one row of tabs instead of stacked sections.
+  const [addTab, setAddTab] = useState<AddTab>('catalog');
 
   async function reload(): Promise<void> {
     setServers(await api.getMcpServers());
@@ -53,6 +58,19 @@ export default function McpSettings() {
     setServers((prev) => [...prev, created]);
   }
 
+  // Save edits to an already-installed server. Throws on failure so the inline
+  // edit form can surface the error and stay open with the user's changes.
+  async function save(id: string, input: McpServerInput): Promise<void> {
+    setBusyId(id);
+    setError('');
+    try {
+      await api.updateMcpServer(id, input);
+      await reload();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   const installedIds = new Set(servers.map((s) => s.name.toLowerCase()));
 
   return (
@@ -73,6 +91,7 @@ export default function McpSettings() {
                 onToggle={() => run(server.id, () => api.updateMcpServer(server.id, { ...toInput(server), enabled: !server.enabled }))}
                 onTest={() => run(server.id, () => api.testMcpServer(server.id))}
                 onDelete={() => run(server.id, () => api.deleteMcpServer(server.id))}
+                onSave={(input) => save(server.id, input)}
               />
             ))}
           </div>
@@ -80,30 +99,43 @@ export default function McpSettings() {
       </section>
 
       <section>
-        <h3 className="mcpHeading">Add from catalog</h3>
-        <p className="hint">
-          One-click installs. Local tools run through <code>npx</code>, so they need Node installed on this machine.
-        </p>
-        <div className="mcpCatalog">
-          {catalog.map((entry) => (
-            <CatalogCard
-              key={entry.id}
-              entry={entry}
-              installed={installedIds.has(entry.name.toLowerCase())}
-              onInstall={(input) => add(input)}
-            />
-          ))}
+        <h3 className="mcpHeading">Add a tool</h3>
+        <div className="mcpTabs" role="tablist">
+          <button role="tab" className={addTab === 'catalog' ? 'on' : ''} onClick={() => setAddTab('catalog')}>Catalog</button>
+          <button role="tab" className={addTab === 'paste' ? 'on' : ''} onClick={() => setAddTab('paste')}>Paste config</button>
+          <button role="tab" className={addTab === 'local' ? 'on' : ''} onClick={() => setAddTab('local')}>Local</button>
+          <button role="tab" className={addTab === 'remote' ? 'on' : ''} onClick={() => setAddTab('remote')}>Remote</button>
         </div>
-      </section>
 
-      <section>
-        <h3 className="mcpHeading">Paste config (JSON)</h3>
-        <JsonImport onImported={reload} />
-      </section>
+        <div className="mcpTabBody">
+          {addTab === 'catalog' && (
+            <>
+              <p className="hint">
+                One-click installs. Local tools run through <code>npx</code>, so they need Node installed on this machine.
+              </p>
+              <div className="mcpCatalog">
+                {catalog.map((entry) => (
+                  <CatalogCard
+                    key={entry.id}
+                    entry={entry}
+                    installed={installedIds.has(entry.name.toLowerCase())}
+                    onInstall={(input) => add(input)}
+                  />
+                ))}
+              </div>
+            </>
+          )}
 
-      <section>
-        <h3 className="mcpHeading">Add manually</h3>
-        <ManualForm onAdd={add} />
+          {addTab === 'paste' && <JsonImport onImported={reload} />}
+
+          {addTab === 'local' && (
+            <ServerForm key="add-local" lockTransport="stdio" submitLabel="Add tool" onSubmit={add} />
+          )}
+
+          {addTab === 'remote' && (
+            <ServerForm key="add-remote" lockTransport="http" submitLabel="Add tool" onSubmit={add} />
+          )}
+        </div>
       </section>
     </div>
   );
@@ -160,14 +192,17 @@ function ServerRow({
   busy,
   onToggle,
   onTest,
-  onDelete
+  onDelete,
+  onSave
 }: {
   server: McpServerView;
   busy: boolean;
   onToggle: () => void;
   onTest: () => void;
   onDelete: () => void;
+  onSave: (input: McpServerInput) => Promise<void>;
 }) {
+  const [editing, setEditing] = useState(false);
   const status = server.status;
   return (
     <div className={`mcpRow ${server.enabled ? '' : 'off'}`}>
@@ -196,8 +231,30 @@ function ServerRow({
             {status.tools.length > 12 && <span className="mcpToolChip">+{status.tools.length - 12} more</span>}
           </div>
         )}
+        {server.enabled && status.connected && status.instructions && (
+          <details className="mcpInstructions">
+            <summary>Usage guidance received from this server</summary>
+            <pre>{status.instructions}</pre>
+          </details>
+        )}
+        {editing && (
+          <div className="mcpRowEdit">
+            <ServerForm
+              initial={toInput(server)}
+              submitLabel="Save changes"
+              onSubmit={async (input) => {
+                await onSave(input);
+                setEditing(false);
+              }}
+              onCancel={() => setEditing(false)}
+            />
+          </div>
+        )}
       </div>
       <div className="mcpRowActions">
+        <button className="pillBtn ghost" onClick={() => setEditing((e) => !e)} disabled={busy}>
+          <Pencil size={14} /> Edit
+        </button>
         <button className="pillBtn ghost" onClick={onToggle} disabled={busy}>
           {server.enabled ? 'Disable' : 'Enable'}
         </button>
@@ -290,14 +347,29 @@ function CatalogCard({
   );
 }
 
-function ManualForm({ onAdd }: { onAdd: (input: McpServerInput) => Promise<void> }) {
-  const [transport, setTransport] = useState<McpTransport>('stdio');
-  const [name, setName] = useState('');
-  const [command, setCommand] = useState('npx');
-  const [argsText, setArgsText] = useState('');
-  const [envText, setEnvText] = useState('');
-  const [url, setUrl] = useState('');
-  const [headersText, setHeadersText] = useState('');
+// One form for both adding a tool by hand and editing an installed one. When
+// `initial` is given it's edit mode (fields prefilled, transport switchable);
+// `lockTransport` pins it to a single transport for the Local/Remote add tabs.
+function ServerForm({
+  initial,
+  lockTransport,
+  submitLabel,
+  onSubmit,
+  onCancel
+}: {
+  initial?: McpServerInput;
+  lockTransport?: McpTransport;
+  submitLabel: string;
+  onSubmit: (input: McpServerInput) => Promise<void>;
+  onCancel?: () => void;
+}) {
+  const [transport, setTransport] = useState<McpTransport>(lockTransport ?? initial?.transport ?? 'stdio');
+  const [name, setName] = useState(initial?.name ?? '');
+  const [command, setCommand] = useState(initial?.command || 'npx');
+  const [argsText, setArgsText] = useState((initial?.args ?? []).join('\n'));
+  const [envText, setEnvText] = useState(toKeyVals(initial?.env));
+  const [url, setUrl] = useState(initial?.url ?? '');
+  const [headersText, setHeadersText] = useState(toKeyVals(initial?.headers));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -307,14 +379,17 @@ function ManualForm({ onAdd }: { onAdd: (input: McpServerInput) => Promise<void>
     try {
       const input: McpServerInput =
         transport === 'http'
-          ? { name, transport, url, headers: parseKeyVals(headersText) }
-          : { name, transport, command, args: parseLines(argsText), env: parseKeyVals(envText) };
-      await onAdd(input);
-      setName('');
-      setArgsText('');
-      setEnvText('');
-      setUrl('');
-      setHeadersText('');
+          ? { name, transport, url, headers: parseKeyVals(headersText), enabled: initial?.enabled }
+          : { name, transport, command, args: parseLines(argsText), env: parseKeyVals(envText), enabled: initial?.enabled };
+      await onSubmit(input);
+      // Adding: clear the form for the next tool. Editing: the parent closes it.
+      if (!initial) {
+        setName('');
+        setArgsText('');
+        setEnvText('');
+        setUrl('');
+        setHeadersText('');
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -325,10 +400,12 @@ function ManualForm({ onAdd }: { onAdd: (input: McpServerInput) => Promise<void>
   return (
     <div className="mcpManual">
       {error && <p className="error">{error}</p>}
-      <div className="mcpTransportToggle">
-        <button className={transport === 'stdio' ? 'on' : ''} onClick={() => setTransport('stdio')}>Local (command)</button>
-        <button className={transport === 'http' ? 'on' : ''} onClick={() => setTransport('http')}>Remote (URL)</button>
-      </div>
+      {!lockTransport && (
+        <div className="mcpTransportToggle">
+          <button className={transport === 'stdio' ? 'on' : ''} onClick={() => setTransport('stdio')}>Local (command)</button>
+          <button className={transport === 'http' ? 'on' : ''} onClick={() => setTransport('http')}>Remote (URL)</button>
+        </div>
+      )}
 
       <label className="mcpField">
         <span>Name</span>
@@ -363,9 +440,16 @@ function ManualForm({ onAdd }: { onAdd: (input: McpServerInput) => Promise<void>
         </>
       )}
 
-      <button className="pillBtn" onClick={submit} disabled={busy || !name.trim()}>
-        <Plus size={15} /> Add tool
-      </button>
+      <div className="mcpFormActions">
+        <button className="pillBtn" onClick={submit} disabled={busy || !name.trim()}>
+          {initial ? <Check size={15} /> : <Plus size={15} />} {submitLabel}
+        </button>
+        {onCancel && (
+          <button className="pillBtn ghost" onClick={onCancel} disabled={busy}>
+            <X size={15} /> Cancel
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -399,6 +483,11 @@ function buildFromCatalog(entry: McpCatalogEntry, values: Record<string, string>
 
 function parseLines(text: string): string[] {
   return text.split('\n').map((line) => line.trim()).filter(Boolean);
+}
+
+// Render a KEY=value map back into the editable "one per line" textarea form.
+function toKeyVals(map?: Record<string, string>): string {
+  return Object.entries(map ?? {}).map(([key, value]) => `${key}=${value}`).join('\n');
 }
 
 function parseKeyVals(text: string): Record<string, string> {
