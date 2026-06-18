@@ -1,8 +1,8 @@
-# Product Requirements Document: Agentic Resume Builder
+# Product Requirements Document: Job Hunter Copilot
 
 ## 1. Product Vision
 
-Build a chat-first resume builder that helps a user represent their real experience for a specific job and company. The product is not a generic resume editor. It is a career memory agent that learns the user's professional background, then creates tailored resumes for target opportunities.
+Build a chat-first job-hunting copilot that helps a user run a job search for specific roles and companies — researching opportunities, drafting outreach, and representing their real experience in tailored resumes. The product is not a generic resume editor. It is a career memory agent that learns the user's professional background, then helps them pursue target opportunities end to end.
 
 The agent should be useful, critical, and principled. It should ask for missing information, challenge weak claims, avoid fabrication, and explain its resume strategy before producing final output.
 

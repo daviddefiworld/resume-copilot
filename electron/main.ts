@@ -12,7 +12,12 @@ class DesktopApp {
 
   async start(): Promise<void> {
     dns.setDefaultResultOrder('ipv4first');
-    process.env.SELF_TOOL_DATA_DIR = path.join(app.getPath('userData'), 'data');
+    // Pin the data directory to a FIXED folder name, decoupled from the package
+    // name. app.getPath('userData') embeds app.getName() (the package.json name),
+    // so renaming the app silently repoints SQLite at a fresh empty database and
+    // orphans the user's memory, profiles, and sessions. Anchoring to a constant
+    // under the roaming appData root keeps one stable database across renames.
+    process.env.SELF_TOOL_DATA_DIR = path.join(app.getPath('appData'), 'job-hunter-copilot', 'data');
 
     try {
       process.loadEnvFile();
@@ -56,7 +61,7 @@ class DesktopApp {
       height: 820,
       minWidth: 980,
       minHeight: 680,
-      title: 'Sox Resume Builder',
+      title: 'Sox Job Hunter Copilot',
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,

@@ -190,7 +190,7 @@ class OpenRouterService {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
-          'X-Title': 'Agentic Resume Builder'
+          'X-Title': 'Job Hunter Copilot'
         },
         body: JSON.stringify(body),
         signal

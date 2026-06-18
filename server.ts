@@ -16,6 +16,6 @@ try {
 const PORT = process.env.PORT || 3500;
 
 const server = createApp().listen(PORT, () => {
-  console.log(`Resume builder API running on http://localhost:${PORT}`);
+  console.log(`Job Hunter Copilot API running on http://localhost:${PORT}`);
 });
 applyServerTimeouts(server);

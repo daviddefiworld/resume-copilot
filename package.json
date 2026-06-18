@@ -1,7 +1,7 @@
 {
-  "name": "agentic-resume-builder",
+  "name": "job-hunter-copilot",
   "version": "1.0.0",
-  "description": "Desktop resume builder with a local Electron app shell.",
+  "description": "Desktop job-hunter copilot with a local Electron app shell.",
   "author": "Self Tool",
   "private": true,
   "type": "module",
@@ -49,8 +49,8 @@
     "typescript": "^5.8.2"
   },
   "build": {
-    "appId": "com.selftool.resume-builder",
-    "productName": "Sox Resume Builder",
+    "appId": "com.selftool.job-hunter-copilot",
+    "productName": "Sox Job Hunter Copilot",
     "npmRebuild": false,
     "electronDist": "node_modules/electron/dist",
     "asarUnpack": [
