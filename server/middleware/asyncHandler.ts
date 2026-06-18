@@ -2,19 +2,40 @@ import type { Request, Response, RequestHandler } from 'express';
 
 type AsyncRoute = (req: Request, res: Response) => unknown | Promise<unknown>;
 
-// Wraps a controller method so thrown errors become clean JSON responses
-// instead of crashing the request. AI/network failures surface as 400s with a
-// message the frontend can show.
+// Last-resort cap on how long any single request may take before we give up and
+// answer with an error. This is the backstop that guarantees a request can never
+// load forever: a try/catch only rescues a promise that REJECTS, so a handler
+// awaiting something that never settles (a wedged external call) would otherwise
+// hang the socket with no reply. Set above the agent's own 140s budget and the
+// 90s per-call AI timeout, so a genuine slow-but-valid turn finishes on its own
+// and this only fires for a true stall.
+const REQUEST_TIMEOUT_MS = 150_000;
+const TIMEOUT_MESSAGE = 'The request timed out while processing. Please try again.';
+
+// Wraps a controller method so thrown errors — and stalls — become clean JSON
+// responses instead of crashing or hanging the request. AI/network failures
+// surface as 400s; a request that exceeds REQUEST_TIMEOUT_MS surfaces as a 504.
 export function asyncHandler(fn: AsyncRoute): RequestHandler {
   return async (req, res, next) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(TIMEOUT_MESSAGE)), REQUEST_TIMEOUT_MS);
+    });
     try {
-      await fn(req, res);
+      // Promise.resolve handles synchronous handlers; a sync throw is caught
+      // below. Whichever settles first wins — the handler, or the timeout.
+      await Promise.race([Promise.resolve(fn(req, res)), timeout]);
     } catch (error) {
       if (res.headersSent) {
         next(error);
         return;
       }
-      res.status(400).json({ error: error instanceof Error ? error.message : 'Request failed.' });
+      const timedOut = error instanceof Error && error.message === TIMEOUT_MESSAGE;
+      res.status(timedOut ? 504 : 400).json({ error: error instanceof Error ? error.message : 'Request failed.' });
+    } finally {
+      // Always clear the timer — on the normal path it would otherwise keep the
+      // event loop (and the process) alive until it fires.
+      clearTimeout(timer);
     }
   };
 }

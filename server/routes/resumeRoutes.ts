@@ -15,6 +15,11 @@ router.delete('/sessions/:id', asyncHandler(resumeController.deleteSession));
 // Session chat
 router.get('/sessions/:id/messages', asyncHandler(resumeController.listMessages));
 router.post('/sessions/:id/messages', asyncHandler(resumeController.sendMessage));
+// Streaming chat: owns its SSE response, so it is NOT wrapped in asyncHandler
+// (whose timeout race would try to send JSON after headers are already flushed).
+router.post('/sessions/:id/messages/stream', resumeController.streamMessage);
+// Steering: queue a message onto the session's in-flight streaming run.
+router.post('/sessions/:id/steer', asyncHandler(resumeController.steer));
 
 // Analysis & drafts
 router.post('/sessions/:id/analyze', asyncHandler(resumeController.analyze));

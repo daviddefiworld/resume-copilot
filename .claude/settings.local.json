@@ -11,7 +11,10 @@
       "Bash(ls dist/)",
       "Bash(ls release/)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(git checkout *)",
+      "PowerShell($env:NODE_NO_WARNINGS=1; $p = Start-Process node -ArgumentList '--disable-warning=ExperimentalWarning','server.ts' -PassThru -RedirectStandardOutput 'e:\\\\2026_2\\\\self-tool\\\\.srv.out' -RedirectStandardError 'e:\\\\2026_2\\\\self-tool\\\\.srv.err'; Start-Sleep -Seconds 3; \"PID=$\\($p.Id\\)\"; \"--- health ---\"; try { \\(Invoke-WebRequest -Uri 'http://127.0.0.1:3500/api/health' -UseBasicParsing -TimeoutSec 5\\).Content } catch { \"health error: $\\($_.Exception.Message\\)\" })"
     ]
   }
 }

@@ -5,6 +5,7 @@ import configRoutes from './configRoutes.ts';
 import profileRoutes from './profileRoutes.ts';
 import memoryRoutes from './memoryRoutes.ts';
 import resumeRoutes from './resumeRoutes.ts';
+import documentRoutes from './documentRoutes.ts';
 import atsRoutes from './atsRoutes.ts';
 import mcpRoutes from './mcpRoutes.ts';
 
@@ -23,6 +24,7 @@ export function buildRouter(): Router {
   router.use('/mcp', mcpRoutes);
   router.use('/', configRoutes);
   router.use('/', resumeRoutes);
+  router.use('/', documentRoutes);
   router.use('/', atsRoutes);
 
   return router;

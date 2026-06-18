@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { Cat, PanelRightOpen, Wand2 } from 'lucide-react';
+import { Cat, Check, FolderOpen, PanelRightOpen, Wand2 } from 'lucide-react';
 import { api } from '../api.ts';
 import Chat from '../components/Chat.tsx';
 import ResumePanel from '../components/ResumePanel.tsx';
+import Workspace from '../components/Workspace.tsx';
 import { resumeToText } from '../resumeText.ts';
 import type { ATSPrefill } from '../App.tsx';
-import type { ResumeMessage, ResumeSession, ResumeVersion, Template } from '../../shared/types.ts';
+import type { ResumeMessage, ResumeSession, ResumeVersion, SessionDocument, Template } from '../../shared/types.ts';
 
 interface SessionViewProps {
   sessionId: string;
@@ -34,14 +35,25 @@ export default function SessionView({ sessionId, templates, onSessionChanged, on
   const [session, setSession] = useState<ResumeSession | null>(null);
   const [messages, setMessages] = useState<ResumeMessage[]>([]);
   const [versions, setVersions] = useState<ResumeVersionState>({ list: [], selectedId: null });
+  const [documents, setDocuments] = useState<SessionDocument[]>([]);
   const [showResume, setShowResume] = useState(false);
+  const [showWorkspace, setShowWorkspace] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  // The reply currently streaming in, shown live until the saved message lands.
+  const [streaming, setStreaming] = useState('');
+  // The live "Next Steps" plan body pushed mid-turn (null = show the persisted doc),
+  // and the agent's current step/tool, for the live task list + a working indicator.
+  const [livePlan, setLivePlan] = useState<string | null>(null);
+  const [liveStatus, setLiveStatus] = useState<{ step: number; tool?: string } | null>(null);
   const [error, setError] = useState('');
   // Guards the first-message send against StrictMode's double-invoked mount
   // effect, which would otherwise send (and persist) the message twice.
   const sentInitial = useRef(false);
+  // Open the Workspace once per turn when the live plan first arrives, so the live
+  // checklist is visible — without fighting the user if they then close the panel.
+  const autoOpenedPlan = useRef(false);
 
   useEffect(() => {
     setError('');
@@ -60,11 +72,21 @@ export default function SessionView({ sessionId, templates, onSessionChanged, on
       setVersions({ list, selectedId: list[list.length - 1]?.id ?? null });
       if (list.length > 0) setShowResume(true);
     }).catch(() => {});
+    api.getDocuments(sessionId).then((docs) => {
+      setDocuments(docs);
+      if (docs.length > 0) setShowWorkspace(true);
+    }).catch(() => {});
   }, [sessionId]);
 
   async function reloadVersions(): Promise<void> {
     const list = await api.getVersions(sessionId);
     setVersions({ list, selectedId: list[list.length - 1]?.id ?? null });
+  }
+
+  async function reloadDocuments(): Promise<SessionDocument[]> {
+    const docs = await api.getDocuments(sessionId);
+    setDocuments(docs);
+    return docs;
   }
 
   async function refreshSession(): Promise<void> {
@@ -75,9 +97,14 @@ export default function SessionView({ sessionId, templates, onSessionChanged, on
   async function saveTitle(): Promise<void> {
     if (!session) return;
     const title = titleDraft.trim() || 'Untitled job';
-    setIsEditingTitle(false);
-    setSession(await api.updateSession(sessionId, { title }));
-    onSessionChanged();
+    try {
+      const updated = await api.updateSession(sessionId, { title });
+      setSession(updated);
+      setIsEditingTitle(false); // close only on success, so a failure keeps the editor open to retry
+      onSessionChanged();
+    } catch (e) {
+      setError((e as Error).message);
+    }
   }
 
   function editTitle(): void {
@@ -91,23 +118,81 @@ export default function SessionView({ sessionId, templates, onSessionChanged, on
     if (event.key === 'Escape') setIsEditingTitle(false);
   }
 
-  async function send(content: string): Promise<void> {
+  async function send(content: string, approvedCalls: string[] = []): Promise<void> {
     const priorVersions = versions.list.length;
+    const priorDocs = documents.length;
     setMessages((prev) => [...prev, { id: `tmp-${Date.now()}`, session_id: sessionId, role: 'user', content, created_at: '' }]);
     setBusy(true);
+    setStreaming('');
+    setLivePlan(null);
+    setLiveStatus(null);
+    autoOpenedPlan.current = false;
     setError('');
+    // Steers that couldn't fold into this turn (came in too late, or a canvas turn):
+    // collected here and re-sent as a fresh turn once this one settles, so they get answered.
+    const deferred: string[] = [];
     try {
-      await api.sendSessionMessage(sessionId, content);
-      setMessages(await api.getSessionMessages(sessionId));
-      // A chat turn can edit the resume (canvas mode) — refresh the document and
-      // open the canvas if a new version appeared.
+      await api.sendSessionMessageStream(sessionId, content, (text) => setStreaming((prev) => prev + text), approvedCalls, {
+        onPlan: (body) => {
+          setLivePlan(body);
+          // Reveal the Workspace the first time a live plan appears this turn (the
+          // panel is closed by default), but don't reopen it if the user closes it.
+          if (body.trim() && !autoOpenedPlan.current) {
+            autoOpenedPlan.current = true;
+            setShowWorkspace(true);
+          }
+        },
+        onStatus: setLiveStatus,
+        onSteerAck: (text, isDeferred) => { if (isDeferred) deferred.push(text); }
+      });
+      // Commit the persisted reply AND tear down the streaming/live state in the same
+      // synchronous block, so the live bubble never lingers as a duplicate while
+      // the follow-up refreshes (versions/documents) run on later round-trips.
+      const msgs = await api.getSessionMessages(sessionId);
+      setStreaming('');
+      setLivePlan(null);
+      setLiveStatus(null);
+      setBusy(false);
+      setMessages(msgs);
+      // A chat turn can edit the resume (canvas mode) — refresh and open the canvas
+      // if a new version appeared.
       const list = await api.getVersions(sessionId);
       setVersions({ list, selectedId: list[list.length - 1]?.id ?? null });
       if (list.length > priorVersions) setShowResume(true);
+      // A turn can also create/update workspace documents — refresh them and open
+      // the workspace if Sox added one.
+      const docs = await reloadDocuments();
+      if (docs.length > priorDocs) setShowWorkspace(true);
+      // Answer any steer that was deferred to the next turn by running it now.
+      if (deferred.length) await send(deferred.join('\n\n'));
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      // Safety net for the error path; idempotent on the success path above.
       setBusy(false);
+      setStreaming('');
+      setLivePlan(null);
+      setLiveStatus(null);
+    }
+  }
+
+  // Steer the in-flight turn: queue the message onto the running agent (it folds in
+  // at its next step). If no run is accepting it (race / not busy), fall back to a
+  // fresh normal turn so the message is never lost.
+  async function steer(content: string): Promise<void> {
+    const tmpId = `tmp-${Date.now()}`;
+    setMessages((prev) => [...prev, { id: tmpId, session_id: sessionId, role: 'user', content, created_at: '' }]);
+    try {
+      await api.steerSession(sessionId, content);
+    } catch (e) {
+      // Drop the optimistic bubble; on a genuine 409 (no run is accepting) send it as
+      // a fresh normal turn. Any other failure is surfaced, not silently re-sent.
+      setMessages((prev) => prev.filter((m) => m.id !== tmpId));
+      if ((e as { status?: number }).status === 409) {
+        await send(content);
+      } else {
+        setError((e as Error).message);
+      }
     }
   }
 
@@ -132,8 +217,13 @@ export default function SessionView({ sessionId, templates, onSessionChanged, on
   async function changeTemplate(templateId: string): Promise<void> {
     if (!versions.selectedId) return;
     localStorage.setItem(TEMPLATE_KEY, templateId); // remembered for the next resume build
-    const updated = await api.setTemplate(versions.selectedId, templateId);
-    setVersions((v) => ({ ...v, list: v.list.map((x) => (x.id === updated.id ? updated : x)) }));
+    setError('');
+    try {
+      const updated = await api.setTemplate(versions.selectedId, templateId);
+      setVersions((v) => ({ ...v, list: v.list.map((x) => (x.id === updated.id ? updated : x)) }));
+    } catch (e) {
+      setError((e as Error).message);
+    }
   }
 
   // Send the current resume + this job into the ATS analyzer, prefilled.
@@ -149,12 +239,45 @@ export default function SessionView({ sessionId, templates, onSessionChanged, on
 
   const subtitle = [session.company_name, session.location].filter(Boolean).join(' · ') || 'Tell Sox about the job';
 
+  // External calls Sox tried to make but the approval gate refused, taken from the
+  // latest assistant turn. Each becomes an "Approve & send" button that re-runs the
+  // turn authorizing exactly that call (by its fingerprint token), once.
+  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
+  const pendingApprovals: { token: string; tool: string }[] = [];
+  const seenTokens = new Set<string>();
+  for (const t of lastAssistant?.tool_trace ?? []) {
+    if (t.needsApproval && t.approvalToken && !seenTokens.has(t.approvalToken)) {
+      seenTokens.add(t.approvalToken);
+      pendingApprovals.push({ token: t.approvalToken, tool: t.tool });
+    }
+  }
+  const shortToolName = (name: string): string => name.split(/__|\./).pop() || name;
+
+  // A short "what Sox is doing now" line for the pending bubble, from live status.
+  const statusText = busy && liveStatus
+    ? (liveStatus.tool ? `Using ${shortToolName(liveStatus.tool)}…` : 'Thinking…')
+    : undefined;
+
   const actions = (
     <>
       <button className="chip" onClick={draft} disabled={busy}><Wand2 size={14} /> Generate draft</button>
+      <button className="chip" onClick={() => setShowWorkspace((s) => !s)}>
+        <FolderOpen size={14} /> Workspace{documents.length > 0 ? ` (${documents.length})` : ''}
+      </button>
       {versions.list.length > 0 && (
         <button className="chip" onClick={() => setShowResume(true)}><PanelRightOpen size={14} /> View resume</button>
       )}
+      {pendingApprovals.map(({ token, tool }) => (
+        <button
+          key={token}
+          className="chip approve"
+          disabled={busy}
+          title={`Authorize Sox to run ${tool} exactly as shown`}
+          onClick={() => void send(`Approved — go ahead and run ${shortToolName(tool)} exactly as shown.`, [token])}
+        >
+          <Check size={14} /> Approve &amp; send: {shortToolName(tool)}
+        </button>
+      ))}
     </>
   );
 
@@ -196,7 +319,10 @@ export default function SessionView({ sessionId, templates, onSessionChanged, on
           <Chat
             messages={messages}
             onSend={send}
+            onSteer={steer}
+            statusText={statusText}
             busy={busy}
+            streamingText={streaming}
             assistantName="Sox"
             assistantAvatar={<Cat size={16} />}
             placeholder="Paste the job description, or ask Sox to tweak the resume…"
@@ -205,6 +331,16 @@ export default function SessionView({ sessionId, templates, onSessionChanged, on
             disclaimer="Sox builds on your memory and fills in realistic detail to fit the job — review before sending."
           />
         </div>
+
+        {showWorkspace && (
+          <Workspace
+            sessionId={sessionId}
+            documents={documents}
+            livePlan={busy ? livePlan : null}
+            onChanged={() => { void reloadDocuments(); }}
+            onClose={() => setShowWorkspace(false)}
+          />
+        )}
 
         {showResume && (
           <ResumePanel

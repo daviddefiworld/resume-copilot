@@ -1,8 +1,9 @@
-# Agentic Resume Builder
+# Job Hunter Copilot
 
-A chat-first resume builder. It learns your real professional background as
-long-term **memory**, then writes truthful, tailored resumes for specific jobs
-and exports them as ATS-friendly PDFs. Built per [docs/PRODUCT_REQUIREMENTS.md](docs/PRODUCT_REQUIREMENTS.md).
+A chat-first job-hunting copilot. It learns your real professional background as
+long-term **memory**, then works a job search end to end — researching roles and
+companies, drafting tailored outreach, and writing truthful, job-specific resumes
+exported as ATS-friendly PDFs. Built per [docs/PRODUCT_REQUIREMENTS.md](docs/PRODUCT_REQUIREMENTS.md).
 
 ## Stack
 

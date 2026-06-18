@@ -1,13 +1,15 @@
 import { randomUUID } from 'crypto';
 import { memoryRepository } from '../repositories/memoryRepository.ts';
 import { openRouter } from './openRouterService.ts';
+import type { StreamDelta } from './openRouterService.ts';
 import { agentRunner, historyWithToolContext } from './agentRunner.ts';
+import type { AgentResult } from './agentRunner.ts';
 import { settingsService } from './settingsService.ts';
 import { profileService } from './profileService.ts';
 import { personalityService } from './personalityService.ts';
 import { characterMemoryService } from './characterMemoryService.ts';
 import { memoryInterviewSystem, memoryExtractionPrompt } from './prompts.ts';
-import type { ChatRole, MemoryItem, MemoryMessage, MemoryProposal, ToolTraceEntry } from '../../shared/types.ts';
+import type { ChatMessage, ChatRole, MemoryItem, MemoryMessage, MemoryProposal, ToolTraceEntry } from '../../shared/types.ts';
 
 interface ExtractionResult {
   items?: MemoryProposal[];
@@ -42,6 +44,23 @@ class MemoryService {
 
   // Append the user's message, generate the agent's reply, store and return it.
   async sendMessage(content: string, personalityId: string): Promise<MemoryMessage> {
+    return this.runChat(content, personalityId, (messages) => agentRunner.run(messages));
+  }
+
+  // Streaming counterpart: streams the reply's text through `onDelta` as it is
+  // generated, then persists and returns the finished message exactly as
+  // sendMessage does (including the trace and the background reflection).
+  async sendMessageStream(content: string, personalityId: string, onDelta: StreamDelta): Promise<MemoryMessage> {
+    return this.runChat(content, personalityId, (messages) => agentRunner.runStream(messages, {}, onDelta));
+  }
+
+  // The shared chat turn: build the prompt, run the agent (buffered or streamed,
+  // chosen by the caller), persist the reply, and kick off the reflection.
+  private async runChat(
+    content: string,
+    personalityId: string,
+    run: (messages: ChatMessage[]) => Promise<AgentResult>
+  ): Promise<MemoryMessage> {
     const text = String(content || '').trim();
     if (!text) throw new Error('Message is required.');
 
@@ -70,7 +89,7 @@ class MemoryService {
 
     // Run as an agent so Sox can use any installed MCP tools mid-interview. The
     // interview/guardrail instructions stay in the system prompt unchanged.
-    const result = await agentRunner.run([
+    const result = await run([
       { role: 'system', content: memoryInterviewSystem(personality, memory, character) },
       ...history
     ]);
@@ -78,8 +97,13 @@ class MemoryService {
     const reply = this.append('assistant', result.content, profileId, result.trace);
 
     // Let the character reflect on the conversation so its memory evolves. Runs
-    // only when the chat has grown enough; failures never affect the reply.
-    await characterMemoryService.maybeReflect(profileId, personality, memoryRepository.listMessages(profileId));
+    // only when the chat has grown enough; failures never affect the reply. Kept
+    // OFF the response's critical path — it's a second AI round-trip the user
+    // doesn't need to wait on — so a slow reflection can't delay (or hang) the
+    // reply. maybeReflect already swallows its own errors; .catch is a backstop.
+    void characterMemoryService
+      .maybeReflect(profileId, personality, memoryRepository.listMessages(profileId))
+      .catch(() => {});
 
     return reply;
   }

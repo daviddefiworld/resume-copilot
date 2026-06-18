@@ -5,6 +5,18 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { mcpRepository } from '../repositories/mcpRepository.ts';
 import type { McpServer, McpServerStatus, OpenAITool } from '../../shared/types.ts';
 
+// Hard bounds on MCP operations. A misbehaving server — a stdio child that
+// spawns but never speaks MCP, or an HTTP/SSE endpoint that accepts the socket
+// but never replies — must fail cleanly, not hang the chat turn. The transport's
+// own start() has no built-in timeout (the SSE EventSource can stay open and
+// silent forever), so we race connect() against our own timer below.
+const CONNECT_TIMEOUT_MS = 15_000;
+const TOOL_TIMEOUT_MS = 30_000;
+
+// The transport object client.connect() accepts (derived so we don't depend on
+// the SDK's transport import path). Not to be confused with McpServer.transport.
+type ClientTransport = Parameters<Client['connect']>[0];
+
 // The model sees a tool as "<server>__<tool>". This maps that name back to the
 // connection and the tool's real name so we can route a call.
 interface Route {
@@ -91,16 +103,23 @@ class McpManager {
   async listTools(): Promise<OpenAITool[]> {
     const servers = mcpRepository.list().filter((s) => s.enabled);
     this.route = new Map();
+    // Connect every server concurrently and skip any that fail or time out, so a
+    // single slow/dead server can neither serialize delay onto the others nor
+    // hang the turn. Safe to parallelize: loadTools swallows each server's own
+    // errors and writes the shared route map under a unique qualified name.
+    const results = await Promise.allSettled(servers.map((server) => this.loadTools(server)));
     const tools: OpenAITool[] = [];
-    for (const server of servers) {
-      tools.push(...(await this.loadTools(server)));
+    for (const result of results) {
+      if (result.status === 'fulfilled') tools.push(...result.value);
     }
     return tools;
   }
 
-  // Run a tool the model asked for. Never throws — a failure comes back as text
-  // so the model can read the error and recover.
-  async callTool(qualifiedName: string, args: unknown): Promise<ToolCallResult> {
+  // Run a tool the model asked for. Never throws — a failure (including a
+  // timeout or the run's deadline aborting) comes back as text so the model can
+  // read the error and recover. `signal` lets the agent's overall run deadline
+  // cancel a tool call that's still in flight.
+  async callTool(qualifiedName: string, args: unknown, signal?: AbortSignal): Promise<ToolCallResult> {
     const route = this.route.get(qualifiedName);
     if (!route) {
       return { text: `Tool "${qualifiedName}" is not available.`, ok: false, server: 'unknown', tool: qualifiedName };
@@ -110,7 +129,11 @@ class McpManager {
       return { text: `The server for "${qualifiedName}" is not connected.`, ok: false, server: route.serverName, tool: route.original };
     }
     try {
-      const result = await entry.client.callTool({ name: route.original, arguments: isRecord(args) ? args : {} });
+      const result = await entry.client.callTool(
+        { name: route.original, arguments: isRecord(args) ? args : {} },
+        undefined,
+        { timeout: TOOL_TIMEOUT_MS, resetTimeoutOnProgress: false, signal }
+      );
       return { text: textOf(result), ok: result.isError !== true, server: route.serverName, tool: route.original };
     } catch (error) {
       return { text: errorMessage(error), ok: false, server: route.serverName, tool: route.original };
@@ -167,7 +190,7 @@ class McpManager {
   private async loadTools(server: McpServer): Promise<OpenAITool[]> {
     try {
       const client = await this.connect(server);
-      const { tools } = await client.listTools();
+      const { tools } = await client.listTools(undefined, { timeout: TOOL_TIMEOUT_MS });
       // Server-level usage guidance sent on initialize. Most clients ignore this;
       // forwarding it is what lets a server teach the agent how to use its tools
       // together without the agent hard-coding any knowledge of the server.
@@ -215,6 +238,27 @@ class McpManager {
     return client;
   }
 
+  // Connect a client to a transport, but never wait longer than CONNECT_TIMEOUT_MS.
+  // The MCP SDK's own request timeout does NOT cover transport.start() — and the
+  // SSE EventSource resolves only on an `endpoint` event with no internal timer —
+  // so a server that accepts the socket and goes silent would otherwise hang the
+  // connect forever. On timeout we close the client to tear down the half-open
+  // stream/child process so it can't leak, then reject with a clear message.
+  private async connectWithTimeout(client: Client, transport: ClientTransport, serverName: string): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        void client.close().catch(() => {});
+        reject(new Error(`MCP server "${serverName}" did not respond within ${CONNECT_TIMEOUT_MS}ms while connecting.`));
+      }, CONNECT_TIMEOUT_MS);
+    });
+    try {
+      await Promise.race([client.connect(transport, { timeout: CONNECT_TIMEOUT_MS }), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // Build the transport for a server and connect a fresh client. Remote servers
   // try Streamable HTTP first and fall back to the older HTTP+SSE transport.
   private async openClient(server: McpServer): Promise<Client> {
@@ -223,7 +267,7 @@ class McpManager {
       const init = { requestInit: { headers: server.headers } };
       try {
         const client = new Client({ name: 'sox-agent', version: '1.0.0' });
-        await client.connect(new StreamableHTTPClientTransport(url, init));
+        await this.connectWithTimeout(client, new StreamableHTTPClientTransport(url, init), server.name);
         return client;
       } catch (error) {
         // Only fall back to the older HTTP+SSE transport for a genuine transport
@@ -231,14 +275,16 @@ class McpManager {
         // rethrow it so the user sees the real reason instead of a generic SSE error.
         if (isAuthError(error)) throw error;
         const client = new Client({ name: 'sox-agent', version: '1.0.0' });
-        await client.connect(new SSEClientTransport(url, init));
+        await this.connectWithTimeout(client, new SSEClientTransport(url, init), server.name);
         return client;
       }
     }
 
     const client = new Client({ name: 'sox-agent', version: '1.0.0' });
-    await client.connect(
-      new StdioClientTransport({ command: server.command, args: server.args, env: server.env, stderr: 'ignore' })
+    await this.connectWithTimeout(
+      client,
+      new StdioClientTransport({ command: server.command, args: server.args, env: server.env, stderr: 'ignore' }),
+      server.name
     );
     return client;
   }

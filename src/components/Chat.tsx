@@ -26,6 +26,17 @@ interface ChatProps {
   emptyState?: ReactNode;
   actions?: ReactNode;
   disclaimer?: string;
+  // The reply being streamed in right now, shown live in the pending assistant
+  // bubble. Empty while busy means "thinking" (typing dots) — e.g. before the
+  // first token, or a turn that can't stream (resume-canvas edits).
+  streamingText?: string;
+  // When provided, sending WHILE busy steers the in-flight turn instead of being
+  // blocked: the text is handed to onSteer (the agent folds it in at its next
+  // step) rather than onSend. Without it, the composer stays blocked while busy.
+  onSteer?: (text: string) => void;
+  // A short "what the agent is doing now" line shown under the pending bubble
+  // (e.g. "Using web_search…"), driven by live status events.
+  statusText?: string;
 }
 
 // ChatGPT-style conversation: a centered scrolling thread with an avatar +
@@ -41,7 +52,10 @@ export default function Chat({
   personaGradient,
   emptyState,
   actions,
-  disclaimer
+  disclaimer,
+  streamingText,
+  onSteer,
+  statusText
 }: ChatProps) {
   // Per-personality avatar colour, applied via a CSS variable so the message
   // avatars and typing indicator all pick it up.
@@ -52,7 +66,7 @@ export default function Chat({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, busy]);
+  }, [messages, busy, streamingText]);
 
   useEffect(() => {
     const el = inputRef.current;
@@ -61,11 +75,19 @@ export default function Chat({
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [text]);
 
+  // True when a send right now would steer the in-flight turn rather than start one.
+  const steering = busy && !!onSteer;
+
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault();
     const value = text.trim();
-    if (!value || busy) return;
+    if (!value) return;
+    if (busy && !onSteer) return; // no steering available → stay blocked while busy
     setText('');
+    if (busy) {
+      onSteer?.(value);
+      return;
+    }
     await onSend(value);
   }
 
@@ -87,15 +109,17 @@ export default function Chat({
           className="composerInput"
           value={text}
           rows={1}
-          placeholder={placeholder || 'Message Sox…'}
+          placeholder={steering ? `Steer ${assistantName} while it works…` : (placeholder || 'Message Sox…')}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
         />
         <div className="composerBar">
           <span className="composerKbd">
-            <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line
+            {steering
+              ? <><kbd>Enter</kbd> to steer · it folds in at the next step</>
+              : <><kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line</>}
           </span>
-          <button type="submit" className="sendBtn" disabled={busy || !text.trim()} aria-label="Send">
+          <button type="submit" className={`sendBtn${steering ? ' steering' : ''}`} disabled={!text.trim() || (busy && !onSteer)} aria-label={steering ? 'Steer' : 'Send'}>
             <ArrowUp size={18} />
           </button>
         </div>
@@ -145,7 +169,10 @@ export default function Chat({
               <div className="avatar" style={avatarStyle}>{assistantAvatar}</div>
               <div className="turnBody">
                 <div className="turnName">{assistantName}</div>
-                <div className="typing"><span /><span /><span /></div>
+                {streamingText
+                  ? <Markdown>{streamingText}</Markdown>
+                  : <div className="typing"><span /><span /><span /></div>}
+                {statusText && <div className="agentStatus">{statusText}</div>}
               </div>
             </div>
           )}

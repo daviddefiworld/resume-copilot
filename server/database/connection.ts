@@ -159,6 +159,15 @@ class Connection {
         created_at     TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS session_documents (
+        id         TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES resume_sessions(id) ON DELETE CASCADE,
+        title      TEXT NOT NULL,
+        content    TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS character_memory (
         profile_id      TEXT NOT NULL,
         personality_id  TEXT NOT NULL,
@@ -185,6 +194,7 @@ class Connection {
 
       CREATE INDEX IF NOT EXISTS idx_resume_messages_session ON resume_messages(session_id);
       CREATE INDEX IF NOT EXISTS idx_resume_versions_session ON resume_versions(session_id);
+      CREATE INDEX IF NOT EXISTS idx_session_documents_session ON session_documents(session_id);
       CREATE INDEX IF NOT EXISTS idx_memory_items_category    ON memory_items(category);
     `);
     this.migrate();

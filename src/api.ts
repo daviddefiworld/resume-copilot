@@ -16,6 +16,7 @@ import type {
   ResumeMessage,
   ResumeSession,
   ResumeVersion,
+  SessionDocument,
   SettingsView,
   Template
 } from '../shared/types.ts';
@@ -48,30 +49,46 @@ interface RequestOptions {
   body?: unknown;
 }
 
-// Transport-level failures worth retrying: the request never reached our route
-// handler, so re-sending on a fresh connection is safe (even for POSTs). A
-// genuine app error (our handlers return 400) is NOT retried. 503 is what the
-// Vite proxy now returns when its upstream socket drops; 502/504 cover other
-// gateway hiccups.
+// Gateway-style statuses worth retrying: the upstream hiccuped rather than the
+// request truly running. A genuine app error (our handlers return 400) is NOT
+// retried. We only retry these for idempotent GETs — re-sending a POST/PATCH is
+// unsafe (it may have already run server-side), and our own per-request timeout
+// now returns a 504 for a stalled handler, which must NOT trigger a re-run of an
+// expensive agent turn.
 const RETRY_STATUSES = new Set([502, 503, 504]);
 const MAX_ATTEMPTS = 3;
+
+// Per-attempt time budget. Mutating/agent routes (POST/PATCH/etc.) can legitimately
+// run for a while — the server caps a chat turn at ~150s — so they get a ceiling
+// just above that; plain reads should be near-instant. Without this the fetch has
+// no deadline, so a stalled server would leave the UI loading forever.
+const MUTATION_TIMEOUT_MS = 160_000;
+const READ_TIMEOUT_MS = 20_000;
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function request<T>(path: string, { method = 'GET', body }: RequestOptions = {}): Promise<T> {
   // Built once; body is an already-serialized string, so it's safe to reuse
-  // across retry attempts.
+  // across retry attempts. The signal is rebuilt per attempt below.
   const options: RequestInit = { method, headers: {} };
   if (body !== undefined) {
     options.headers = { 'Content-Type': 'application/json' };
     options.body = JSON.stringify(body);
   }
+  const timeoutMs = method === 'GET' ? READ_TIMEOUT_MS : MUTATION_TIMEOUT_MS;
 
   for (let attempt = 1; ; attempt++) {
     let response: Response;
     try {
-      response = await fetch(`${BASE}${path}`, options);
+      // Fresh signal each attempt — a fired AbortSignal can't be reused.
+      response = await fetch(`${BASE}${path}`, { ...options, signal: AbortSignal.timeout(timeoutMs) });
     } catch (error) {
+      // The server accepted the request but never answered in time. Do NOT
+      // retry — a mutating call may have already run server-side — surface it.
+      const name = (error as Error)?.name;
+      if (name === 'TimeoutError' || name === 'AbortError') {
+        throw new Error('The server took too long to respond. Please try again.');
+      }
       // Network/transport failure — typically a stale socket reused after the
       // app sat idle. The request never reached the server; retry on a fresh
       // connection before giving up.
@@ -83,16 +100,98 @@ async function request<T>(path: string, { method = 'GET', body }: RequestOptions
     }
 
     if (!response.ok) {
-      if (RETRY_STATUSES.has(response.status) && attempt < MAX_ATTEMPTS) {
+      if (method === 'GET' && RETRY_STATUSES.has(response.status) && attempt < MAX_ATTEMPTS) {
         await wait(attempt * 150);
         continue;
       }
       const data = (await response.json().catch(() => ({}))) as { error?: string };
-      throw new Error(data.error || `Request failed (${response.status})`);
+      const error = new Error(data.error || `Request failed (${response.status})`) as Error & { status?: number };
+      error.status = response.status; // lets callers distinguish e.g. a 409 from other failures
+      throw error;
     }
 
     return response.json() as Promise<T>;
   }
+}
+
+// Optional live-event callbacks a streaming turn can push alongside its prose
+// deltas: plan = the live "Next Steps" checklist body; status = the agent's
+// current step/tool; steerAck = a steered message was accepted (deferred when it
+// will seed the next turn rather than fold into this one).
+export interface StreamHandlers {
+  onPlan?: (body: string) => void;
+  onStatus?: (status: { step: number; tool?: string }) => void;
+  onSteerAck?: (text: string, deferred?: boolean) => void;
+}
+
+// One streaming chat POST over Server-Sent Events. `onDelta` fires for each text
+// chunk as the reply is generated; the promise resolves with the final persisted
+// message the server sends in its `done` event. Not retried — a chat POST isn't
+// idempotent — and uses the mutation timeout, which sits above the server's own
+// per-turn budget so a real reply is never cut short.
+async function streamRequest<T>(
+  path: string,
+  body: unknown,
+  onDelta: (text: string) => void,
+  handlers: StreamHandlers = {}
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(MUTATION_TIMEOUT_MS)
+    });
+  } catch (error) {
+    const name = (error as Error)?.name;
+    if (name === 'TimeoutError' || name === 'AbortError') {
+      throw new Error('The server took too long to respond. Please try again.');
+    }
+    throw new Error('Could not reach the local server. Please try again.');
+  }
+
+  // A transport-level failure before the stream opened (server down, 404). Once
+  // the SSE stream is open the server reports errors as an `error` event instead.
+  if (!response.ok || !response.body) {
+    const data = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || `Request failed (${response.status})`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let final: T | undefined;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // SSE events are separated by a blank line; each carries one `data:` payload.
+    let boundary: number;
+    while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+      const dataLine = buffer.slice(0, boundary).split('\n').find((l) => l.startsWith('data:'));
+      buffer = buffer.slice(boundary + 2);
+      if (!dataLine) continue;
+      let event: { type: string; text?: string; message?: T; error?: string; body?: string; step?: number; tool?: string; deferred?: boolean };
+      try {
+        event = JSON.parse(dataLine.slice(5).trim());
+      } catch {
+        continue;
+      }
+      if (event.type === 'delta' && event.text) onDelta(event.text);
+      else if (event.type === 'plan') handlers.onPlan?.(event.body ?? '');
+      else if (event.type === 'status') handlers.onStatus?.({ step: event.step ?? 0, tool: event.tool });
+      else if (event.type === 'steer_ack') handlers.onSteerAck?.(event.text ?? '', event.deferred);
+      else if (event.type === 'done') final = event.message;
+      else if (event.type === 'error') throw new Error(event.error || 'The response failed.');
+    }
+  }
+
+  if (final === undefined) {
+    throw new Error('The response ended unexpectedly. Please try again.');
+  }
+  return final;
 }
 
 export interface MemoryItemFields {
@@ -146,6 +245,9 @@ export const api = {
   getMemoryMessages: () => request<MemoryMessage[]>('/memory/messages'),
   sendMemoryMessage: (content: string, personalityId: string) =>
     request<MemoryMessage>('/memory/messages', { method: 'POST', body: { content, personalityId } }),
+  // Streaming send: `onDelta` receives the reply text as it is generated.
+  sendMemoryMessageStream: (content: string, personalityId: string, onDelta: (text: string) => void) =>
+    streamRequest<MemoryMessage>('/memory/messages/stream', { content, personalityId }, onDelta),
   clearMemoryMessages: () => request<{ ok: true }>('/memory/messages', { method: 'DELETE' }),
   proposeMemory: () => request<{ items: MemoryProposal[] }>('/memory/propose', { method: 'POST' }),
   getMemoryItems: () => request<MemoryItem[]>('/memory/items'),
@@ -164,8 +266,31 @@ export const api = {
   deleteSession: (id: string) => request<{ ok: true }>(`/sessions/${id}`, { method: 'DELETE' }),
 
   getSessionMessages: (id: string) => request<ResumeMessage[]>(`/sessions/${id}/messages`),
-  sendSessionMessage: (id: string, content: string) =>
-    request<ResumeMessage>(`/sessions/${id}/messages`, { method: 'POST', body: { content } }),
+  sendSessionMessage: (id: string, content: string, approvedCalls: string[] = []) =>
+    request<ResumeMessage>(`/sessions/${id}/messages`, { method: 'POST', body: { content, approvedCalls } }),
+  // Streaming send: `onDelta` receives the reply text as it is generated. Canvas
+  // (resume-edit) turns can't stream, so they arrive whole with no deltas.
+  // `approvedCalls` carries one-turn approval tokens for previously-refused calls;
+  // `handlers` receives live plan/status/steer-ack events during the turn.
+  sendSessionMessageStream: (
+    id: string,
+    content: string,
+    onDelta: (text: string) => void,
+    approvedCalls: string[] = [],
+    handlers: StreamHandlers = {}
+  ) => streamRequest<ResumeMessage>(`/sessions/${id}/messages/stream`, { content, approvedCalls }, onDelta, handlers),
+  // Steer the in-flight run for a session: queue a message the agent folds in at
+  // its next step. 409 when no run is active (the caller sends a normal turn instead).
+  steerSession: (id: string, content: string) =>
+    request<{ queued: boolean }>(`/sessions/${id}/steer`, { method: 'POST', body: { content } }),
+
+  // Workspace documents — the living artifacts Sox maintains per session.
+  getDocuments: (id: string) => request<SessionDocument[]>(`/sessions/${id}/documents`),
+  createDocument: (id: string, body: { title: string; content?: string }) =>
+    request<SessionDocument>(`/sessions/${id}/documents`, { method: 'POST', body }),
+  updateDocument: (docId: string, body: { title?: string; content?: string }) =>
+    request<SessionDocument>(`/documents/${docId}`, { method: 'PATCH', body }),
+  deleteDocument: (docId: string) => request<{ ok: true }>(`/documents/${docId}`, { method: 'DELETE' }),
 
   analyzeJob: (id: string) => request<ResumeSession['analysis']>(`/sessions/${id}/analyze`, { method: 'POST' }),
   generateDraft: (id: string, templateId?: string) =>

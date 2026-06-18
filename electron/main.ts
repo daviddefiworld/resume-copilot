@@ -30,7 +30,7 @@ class DesktopApp {
   }
 
   private async startServer(): Promise<string> {
-    const { createApp } = await import('../server/app.ts');
+    const { createApp, applyServerTimeouts } = await import('../server/app.ts');
     const port = this.devUrl() ? Number(process.env.PORT || 3500) : 0;
     const clientDir = this.devUrl() ? undefined : path.join(__dirname, '..', 'dist');
 
@@ -44,6 +44,7 @@ class DesktopApp {
         }
         resolve(`http://127.0.0.1:${address.port}`);
       });
+      applyServerTimeouts(server);
       server.on('error', reject);
     });
   }

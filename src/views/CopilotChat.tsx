@@ -12,6 +12,8 @@ import type { MemoryMessage, MemoryProposal, Personality } from '../../shared/ty
 export default function CopilotChat({ persona, onMemorySaved }: { persona: Personality | null; onMemorySaved?: () => void }) {
   const [messages, setMessages] = useState<MemoryMessage[]>([]);
   const [busy, setBusy] = useState(false);
+  // The reply currently streaming in, shown live until the saved message lands.
+  const [streaming, setStreaming] = useState('');
   const [proposals, setProposals] = useState<MemoryProposal[] | null>(null);
   const [picked, setPicked] = useState<Record<number, boolean>>({});
   const [error, setError] = useState('');
@@ -30,13 +32,16 @@ export default function CopilotChat({ persona, onMemorySaved }: { persona: Perso
     setError('');
     setMessages((prev) => [...prev, { id: `tmp-${Date.now()}`, role: 'user', content, created_at: '' }]);
     setBusy(true);
+    setStreaming('');
     try {
-      await api.sendMemoryMessage(content, persona?.id ?? 'sox');
+      await api.sendMemoryMessageStream(content, persona?.id ?? 'sox', (text) =>
+        setStreaming((prev) => prev + text));
       setMessages(await api.getMemoryMessages());
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
+      setStreaming('');
     }
   }
 
@@ -118,6 +123,7 @@ export default function CopilotChat({ persona, onMemorySaved }: { persona: Perso
         messages={messages}
         onSend={send}
         busy={busy}
+        streamingText={streaming}
         assistantName={personaName}
         assistantAvatar={<visual.Icon size={16} />}
         personaGradient={visual.gradient}

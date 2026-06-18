@@ -19,6 +19,9 @@ interface CallOptions {
 interface CompleteOptions extends CallOptions {
   // Tools the model may call this turn. Omitted/empty → a plain completion.
   tools?: OpenAITool[];
+  // An external deadline (the agent run's overall budget). Combined with the
+  // per-call 90s cap so whichever fires first ends the request.
+  signal?: AbortSignal;
 }
 
 // One assistant turn: its text and any tool calls it wants run. `content` is ''
@@ -28,6 +31,9 @@ export interface AssistantMessage {
   tool_calls?: ToolCall[];
 }
 
+// Invoked for each text chunk of a streaming completion, in order.
+export type StreamDelta = (text: string) => void;
+
 // The raw message OpenRouter returns (content may be null on a tool-call turn).
 interface RawMessage {
   content?: string | null;
@@ -36,6 +42,22 @@ interface RawMessage {
 
 interface CompletionResponse {
   choices?: Array<{ message?: RawMessage }>;
+}
+
+// A single SSE chunk from a streaming completion. `delta.content` is the next
+// slice of text; tool calls arrive in indexed pieces spread across chunks
+// (id/name once, arguments accumulated character-by-character).
+interface StreamChunk {
+  choices?: Array<{
+    delta?: {
+      content?: string | null;
+      tool_calls?: Array<{
+        index?: number;
+        id?: string;
+        function?: { name?: string; arguments?: string };
+      }>;
+    };
+  }>;
 }
 
 // True when an OpenRouter error looks like the model rejecting json_object
@@ -92,7 +114,7 @@ class OpenRouterService {
   // Agentic turn: send the conversation plus the tools the model may call, and
   // return the assistant message (text and/or tool calls). The agent loop owns
   // executing the calls and deciding when to stop.
-  async complete(messages: ChatMessage[], { tools, temperature = 0.4, model }: CompleteOptions = {}): Promise<AssistantMessage> {
+  async complete(messages: ChatMessage[], { tools, temperature = 0.4, model, signal }: CompleteOptions = {}): Promise<AssistantMessage> {
     const body: Record<string, unknown> = {
       model: model || settingsService.model(),
       messages,
@@ -102,7 +124,30 @@ class OpenRouterService {
       body.tools = tools;
       body.tool_choice = 'auto';
     }
-    const message = await this.postChat(body);
+    const message = await this.postChat(body, signal);
+    return { content: typeof message.content === 'string' ? message.content : '', tool_calls: message.tool_calls };
+  }
+
+  // Streaming variant of `complete`: the same request with `stream: true`, calling
+  // `onDelta` for each text chunk as it arrives. Tool-call deltas are accumulated
+  // and returned whole (a half-formed tool call is never surfaced), so the agent
+  // loop treats a streamed turn exactly like a buffered one.
+  async completeStream(
+    messages: ChatMessage[],
+    { tools, temperature = 0.4, model, signal }: CompleteOptions = {},
+    onDelta: StreamDelta
+  ): Promise<AssistantMessage> {
+    const body: Record<string, unknown> = {
+      model: model || settingsService.model(),
+      messages,
+      temperature,
+      stream: true
+    };
+    if (tools && tools.length > 0) {
+      body.tools = tools;
+      body.tool_choice = 'auto';
+    }
+    const message = await this.postChatStream(body, onDelta, signal);
     return { content: typeof message.content === 'string' ? message.content : '', tool_calls: message.tool_calls };
   }
 
@@ -122,13 +167,21 @@ class OpenRouterService {
     return message.content;
   }
 
-  // The single outbound call: auth, transport, timeout, and error shaping. Both
-  // plain completions and tool-calling turns go through here.
-  private async postChat(body: Record<string, unknown>): Promise<RawMessage> {
+  // The single outbound transport: auth, fetch, timeout, and error shaping. Both
+  // buffered and streaming requests go through here; the caller decides how to
+  // read the body. An optional external signal (the agent's run deadline) is
+  // combined with the per-call cap so whichever fires first ends the request.
+  private async dispatch(body: Record<string, unknown>, externalSignal?: AbortSignal): Promise<Response> {
     const apiKey = settingsService.apiKey();
     if (!apiKey) {
       throw new Error('OpenRouter API key is not set. Add it in Settings.');
     }
+
+    // Bound the whole request so a stalled connection fails cleanly with a clear
+    // message instead of hanging or surfacing a bare "fetch failed". When the
+    // caller passes a run deadline, abort as soon as either fires.
+    const perCall = AbortSignal.timeout(90_000);
+    const signal = externalSignal ? AbortSignal.any([perCall, externalSignal]) : perCall;
 
     let response: Response;
     try {
@@ -140,9 +193,7 @@ class OpenRouterService {
           'X-Title': 'Agentic Resume Builder'
         },
         body: JSON.stringify(body),
-        // Bound the whole request so a stalled connection fails cleanly with a
-        // clear message instead of hanging or surfacing a bare "fetch failed".
-        signal: AbortSignal.timeout(90_000)
+        signal
       });
     } catch (error) {
       if ((error as Error).name === 'TimeoutError') {
@@ -159,13 +210,78 @@ class OpenRouterService {
       const detail = await response.text();
       throw new Error(`OpenRouter request failed (${response.status}): ${detail.slice(0, 300)}`);
     }
+    return response;
+  }
 
+  // Buffered completion: read the whole JSON body and return the one message.
+  private async postChat(body: Record<string, unknown>, externalSignal?: AbortSignal): Promise<RawMessage> {
+    const response = await this.dispatch(body, externalSignal);
     const data = (await response.json()) as CompletionResponse;
     const message = data.choices?.[0]?.message;
     if (!message) {
       throw new Error('OpenRouter returned an empty response.');
     }
     return message;
+  }
+
+  // Streaming completion: parse the SSE body, forwarding each text delta to
+  // `onDelta` and re-assembling tool-call deltas (which arrive in indexed pieces)
+  // into whole calls. Returns the fully assembled message once the stream ends.
+  private async postChatStream(
+    body: Record<string, unknown>,
+    onDelta: StreamDelta,
+    externalSignal?: AbortSignal
+  ): Promise<RawMessage> {
+    const response = await this.dispatch(body, externalSignal);
+    if (!response.body) {
+      throw new Error('OpenRouter returned no response stream.');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let content = '';
+    const toolCalls: ToolCall[] = [];
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // Each SSE field is one line; process every complete line and keep any
+      // trailing partial in the buffer until its newline arrives.
+      let newline: number;
+      while ((newline = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        // Skip blanks and ': OPENROUTER PROCESSING' keep-alive comments.
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') continue;
+        let chunk: StreamChunk;
+        try {
+          chunk = JSON.parse(data) as StreamChunk;
+        } catch {
+          continue; // a malformed/partial payload; ignore it
+        }
+        const delta = chunk.choices?.[0]?.delta;
+        if (!delta) continue;
+        if (typeof delta.content === 'string' && delta.content) {
+          content += delta.content;
+          onDelta(delta.content);
+        }
+        for (const tc of delta.tool_calls ?? []) {
+          const index = tc.index ?? 0;
+          const call = (toolCalls[index] ??= { id: '', type: 'function', function: { name: '', arguments: '' } });
+          if (tc.id) call.id = tc.id;
+          if (tc.function?.name) call.function.name += tc.function.name;
+          if (tc.function?.arguments) call.function.arguments += tc.function.arguments;
+        }
+      }
+    }
+
+    // The array can be sparse if providers number tool calls non-contiguously.
+    const calls = toolCalls.filter(Boolean);
+    return { content, tool_calls: calls.length > 0 ? calls : undefined };
   }
 
   // Models sometimes wrap JSON in prose or code fences despite instructions.

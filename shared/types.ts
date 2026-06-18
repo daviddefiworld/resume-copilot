@@ -155,6 +155,19 @@ export interface ResumeMessage {
   tool_trace?: ToolTraceEntry[];
 }
 
+// A living workspace artifact for one job-hunt session — company notes, role
+// detail, key people, an outreach log, next steps, etc. The agent decides what
+// documents to keep (their titles are free-form) and maintains them with its
+// document tools; the user can also view, edit, and delete them in the sidebar.
+export interface SessionDocument {
+  id: string;
+  session_id: string;
+  title: string;
+  content: string; // Markdown
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ResumeSession {
   id: string;
   profile_id: string;
@@ -392,4 +405,12 @@ export interface ToolTraceEntry {
   args: unknown;
   result: string;
   ok: boolean;
+  // Set when the agent tried to call an external (non-read-only) tool without
+  // approval and it was refused. The UI uses this to offer an "approve & send"
+  // action that re-runs the turn authorizing that one call.
+  needsApproval?: boolean;
+  // Fingerprint of the refused {name, args} call. The "approve & send" action
+  // echoes this back so the server authorizes exactly the payload that was
+  // refused — not just the tool name — and only once.
+  approvalToken?: string;
 }

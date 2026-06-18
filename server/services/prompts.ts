@@ -16,6 +16,10 @@ const GUARDRAILS = (): string => promptsService.get('guardrails');
 const RESUME_RICHNESS = (): string => promptsService.get('resume_richness');
 const INSIGHT = (): string => promptsService.get('insight');
 const MISSION = (): string => promptsService.get('mission');
+// The job-hunt strategy Sox follows. Injected into the copilot, resume, and
+// canvas prompts as {{playbook}}; always placed before {{guardrails}} so honesty
+// and approval-before-send stay the overriding final word.
+const PLAYBOOK = (): string => promptsService.get('playbook');
 
 function personaLine(p: Personality): string {
   const essence = p.essence ? `Who you are: ${p.essence} ` : '';
@@ -169,6 +173,7 @@ export function resumeCanvasTurnSystem(input: {
   return fill(promptsService.get('canvas_turn'), {
     persona: personaLine(personality),
     insight: INSIGHT(),
+    playbook: PLAYBOOK(),
     resumeRichness: RESUME_RICHNESS(),
     jsonShape: RESUME_CONTENT_SHAPE,
     current: JSON.stringify(current, null, 2),
@@ -187,8 +192,10 @@ export function resumeChatSystem(input: {
   target: ResumeSession;
   memory: string;
   character: string;
+  // The session's "Next Steps" plan document (full body), or '' when none yet.
+  nextSteps: string;
 }): string {
-  const { personality, target, memory, character } = input;
+  const { personality, target, memory, character, nextSteps } = input;
   const hasJob = Boolean(target.job_description);
   const hasCompany = Boolean(target.company_name);
   let step: string;
@@ -214,8 +221,10 @@ export function resumeChatSystem(input: {
   return fill(promptsService.get('resume_chat'), {
     persona: personaLine(personality),
     insight: INSIGHT(),
+    playbook: PLAYBOOK(),
     memory: memory || '(nothing saved yet — they can build it in the Copilot chat)',
     character: character || '(this is early in your relationship — you are still getting to know them)',
+    nextSteps: nextSteps || '(no plan yet — propose a short Next Steps plan and offer to start it)',
     step,
     memoryNudge
   });

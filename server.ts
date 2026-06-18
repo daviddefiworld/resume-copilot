@@ -1,5 +1,5 @@
 import dns from 'node:dns';
-import { createApp } from './server/app.ts';
+import { applyServerTimeouts, createApp } from './server/app.ts';
 
 // Prefer IPv4 when a host resolves to both. Some networks (and openrouter.ai's
 // IPv6-only DNS on certain ISPs) have slow or flaky IPv6 routing that trips
@@ -15,6 +15,7 @@ try {
 
 const PORT = process.env.PORT || 3500;
 
-createApp().listen(PORT, () => {
+const server = createApp().listen(PORT, () => {
   console.log(`Resume builder API running on http://localhost:${PORT}`);
 });
+applyServerTimeouts(server);

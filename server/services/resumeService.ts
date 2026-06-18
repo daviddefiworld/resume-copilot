@@ -2,7 +2,12 @@ import { randomUUID } from 'crypto';
 import { resumeRepository } from '../repositories/resumeRepository.ts';
 import type { RawSession, RawVersion } from '../repositories/resumeRepository.ts';
 import { openRouter } from './openRouterService.ts';
+import type { StreamDelta } from './openRouterService.ts';
 import { agentRunner, historyWithToolContext } from './agentRunner.ts';
+import type { AgentResult, LocalTool } from './agentRunner.ts';
+import { documentService } from './documentService.ts';
+import { runRegistry } from './runRegistry.ts';
+import type { RunEvent, RunHandle } from './runRegistry.ts';
 import { settingsService } from './settingsService.ts';
 import { memoryService } from './memoryService.ts';
 import { profileService } from './profileService.ts';
@@ -17,6 +22,7 @@ import {
   resumeDraftPrompt
 } from './prompts.ts';
 import type {
+  ChatMessage,
   ChatRole,
   JobAnalysis,
   ResumeContent,
@@ -72,6 +78,19 @@ interface CanvasTurn {
   edited?: boolean;
   content?: ResumeContent;
   strategy?: ResumeStrategy;
+}
+
+// Whether an OpenRouter failure is a hard transport/timeout/auth error that a
+// second attempt won't fix. The canvas turn falls back to a plain agent reply
+// only for recoverable JSON/format errors; for these we re-throw so the real
+// reason surfaces immediately instead of silently doubling the latency.
+function isHardAiFailure(error: unknown): boolean {
+  const name = (error as { name?: string })?.name ?? '';
+  if (name === 'TimeoutError' || name === 'AbortError') return true;
+  const message = ((error as { message?: string })?.message ?? '').toLowerCase();
+  return message.includes('timed out')
+    || message.includes('could not reach openrouter')
+    || message.includes('api key is not set');
 }
 
 // The assistant message that accompanies a freshly generated draft. The strategy
@@ -156,69 +175,169 @@ class ResumeService {
     return resumeRepository.listMessages(sessionId);
   }
 
-  async sendMessage(sessionId: string, content: string): Promise<ResumeMessage> {
+  async sendMessage(sessionId: string, content: string, approvedCalls: string[] = []): Promise<ResumeMessage> {
+    return this.runChat(sessionId, content, () => {}, (messages, localTools, steer) =>
+      agentRunner.run(messages, { localTools, approvedCalls, steer }));
+  }
+
+  // Streaming counterpart: in plain conversation (no draft yet) the reply streams
+  // token-by-token through `onDelta`. Canvas mode runs a strict-JSON edit turn
+  // that can't be streamed, so its reply lands whole — onDelta is simply never
+  // called and the finished message arrives at once. `approvedCalls` carries the
+  // fingerprint tokens of previously-refused external calls the user approved.
+  // `pushEvent` sends live plan/status/steer_ack events down the open SSE stream.
+  async sendMessageStream(
+    sessionId: string,
+    content: string,
+    onDelta: StreamDelta,
+    approvedCalls: string[] = [],
+    pushEvent: (event: RunEvent) => void = () => {}
+  ): Promise<ResumeMessage> {
+    return this.runChat(sessionId, content, pushEvent, (messages, localTools, steer) =>
+      agentRunner.runStream(messages, { localTools, approvedCalls, steer }, onDelta));
+  }
+
+  // Queue a steering message onto the session's in-flight run, so the agent folds
+  // it in at its next step. Throws a NotRunning error (the controller maps it to a
+  // 409, and the client then falls back to a fresh normal turn) when no run is
+  // accepting — including during teardown and in canvas mode between drains.
+  queueSteer(sessionId: string, content: string): { queued: boolean } {
+    const text = String(content || '').trim();
+    if (!text) throw new Error('Message is required.');
+    const handle = runRegistry.get(sessionId);
+    if (!handle || !handle.acceptingSteers) {
+      const error = new Error('Sox is not in the middle of a turn for this session.');
+      error.name = 'NotRunning';
+      throw error;
+    }
+    handle.enqueue(text);
+    return { queued: true };
+  }
+
+  private async runChat(
+    sessionId: string,
+    content: string,
+    pushEvent: (event: RunEvent) => void,
+    run: (messages: ChatMessage[], localTools: LocalTool[], steer: RunHandle) => Promise<AgentResult>
+  ): Promise<ResumeMessage> {
     const session = this.getSession(sessionId);
     const text = String(content || '').trim();
     if (!text) throw new Error('Message is required.');
 
-    this.appendMessage(sessionId, 'user', text);
+    // One monotonic timestamp source for the whole run, so every row this turn
+    // writes (the user message, any mid-turn steers, the assistant reply) gets a
+    // strictly-increasing created_at — FIFO order then survives reload regardless of
+    // clock resolution (ORDER BY created_at ASC).
+    let tick = Date.now() - 1;
+    const nextTs = (): string => new Date(++tick).toISOString();
+    // How many steers were folded in and persisted mid-turn — so the error path
+    // knows whether a committed steer would be left without a following assistant.
+    let consumedSteers = 0;
 
-    const personality = personalityService.get(session.personality_id);
-    const profileId = session.profile_id || profileService.activeId() || '';
-    const memory = memoryService.buildMemoryText(profileId);
-    // The character's own evolving memory of this user (durable notes + recap),
-    // so the session copilot is as informed and in-character as the Copilot chat.
-    const character = characterMemoryService.contextText(profileId, personality.id);
-    const history = historyWithToolContext(this.listMessages(sessionId));
-    const latest = resumeRepository.getLatestVersion(sessionId);
+    // Register the run BEFORE persisting anything, so a concurrent-run rejection
+    // can't leave an orphan user message. persistSteer writes a consumed steer as a
+    // role:'user' row (stamped from the same monotonic source); pushEvent rides the
+    // open SSE stream.
+    const handle = runRegistry.register(sessionId, {
+      persistSteer: (steerText) => { consumedSteers++; this.appendMessage(sessionId, 'user', steerText, undefined, nextTs()); },
+      pushEvent
+    });
 
-    // No draft yet → plain conversation (asks for the job, then the company).
-    // Runs as an agent so installed MCP tools are available while scoping the
-    // role (e.g. researching the company); the step prompt is unchanged.
-    if (!latest) {
-      const result = await agentRunner.run([
-        { role: 'system', content: resumeChatSystem({ personality, target: session, memory, character }) },
-        ...history
-      ]);
-      return this.appendMessage(sessionId, 'assistant', result.content, result.trace);
-    }
-
-    // Canvas mode: a draft is open. The same chat both answers questions and
-    // edits the resume when asked, updating the canvas as a side effect.
-    const current: ResumeDraft = {
-      content: JSON.parse(latest.content) as ResumeContent,
-      strategy: JSON.parse(latest.strategy) as ResumeStrategy
-    };
-    // The structured edit turn stays tool-free: editing the resume needs strict
-    // JSON, and resume content must come only from confirmed memory.
     try {
-      const turn = await openRouter.json<CanvasTurn>(
-        [{ role: 'system', content: resumeCanvasTurnSystem({ personality, current, memory, character }) }, ...history],
-        { model: settingsService.finalModel() }
-      );
-      const reply = (turn.reply || 'Done.').trim();
-      if (turn.edited && turn.content) {
-        this.saveVersion(sessionId, { content: turn.content, strategy: turn.strategy ?? current.strategy }, latest.template_id);
+      this.appendMessage(sessionId, 'user', text, undefined, nextTs());
+
+      const personality = personalityService.get(session.personality_id);
+      const profileId = session.profile_id || profileService.activeId() || '';
+      const memory = memoryService.buildMemoryText(profileId);
+      // The character's own evolving memory of this user (durable notes + recap),
+      // so the session copilot is as informed and in-character as the Copilot chat.
+      const character = characterMemoryService.contextText(profileId, personality.id);
+      const history = historyWithToolContext(this.listMessages(sessionId));
+      const latest = resumeRepository.getLatestVersion(sessionId);
+
+      // The session's living workspace: a system snapshot of its documents plus the
+      // tools Sox uses to maintain them. set_next_steps fires onPlanChange so the
+      // "Next Steps" checklist updates live mid-turn over the SSE stream.
+      const localTools = documentService.tools(sessionId, (body) => handle.pushEvent({ type: 'plan', body }));
+      const workspace: ChatMessage = { role: 'system', content: documentService.promptContext(sessionId) };
+      // The durable plan, fed back in so Sox sees and advances its own committed
+      // plan each turn instead of relying on lossy chat recap.
+      const nextSteps = documentService.nextStepsContext(sessionId);
+
+      // Compute the reply (the agent loop, or a canvas JSON edit), but persist it at
+      // the END so the turn-boundary steer handling and timestamp ordering are in one place.
+      let reply: { content: string; trace?: ToolTraceEntry[] };
+      if (!latest) {
+        // No draft yet → plain conversation, run as a steerable agent.
+        const result = await run([
+          { role: 'system', content: resumeChatSystem({ personality, target: session, memory, character, nextSteps }) },
+          workspace,
+          ...history
+        ], localTools, handle);
+        reply = { content: result.content, trace: result.trace };
+      } else {
+        // Canvas mode: a draft is open. A strict-JSON edit turn (tool-free, not
+        // steerable mid-turn — any steer arriving here is deferred to the next turn).
+        const current: ResumeDraft = {
+          content: JSON.parse(latest.content) as ResumeContent,
+          strategy: JSON.parse(latest.strategy) as ResumeStrategy
+        };
+        try {
+          const turn = await openRouter.json<CanvasTurn>(
+            [{ role: 'system', content: resumeCanvasTurnSystem({ personality, current, memory, character }) }, ...history],
+            { model: settingsService.finalModel() }
+          );
+          if (turn.edited && turn.content) {
+            this.saveVersion(sessionId, { content: turn.content, strategy: turn.strategy ?? current.strategy }, latest.template_id);
+          }
+          reply = { content: (turn.reply || 'Done.').trim() };
+        } catch (error) {
+          // A genuine timeout/network/auth failure won't be fixed by re-running.
+          if (isHardAiFailure(error)) throw error;
+          // A format/JSON hiccup: fall back to a plain conversational (steerable) reply.
+          const result = await run([
+            { role: 'system', content: resumeChatSystem({ personality, target: session, memory, character, nextSteps }) },
+            workspace,
+            ...history
+          ], localTools, handle);
+          reply = { content: result.content, trace: result.trace };
+        }
       }
-      return this.appendMessage(sessionId, 'assistant', reply);
-    } catch {
-      // If the structured turn fails, fall back to a plain conversational reply,
-      // which may use MCP tools to answer the user's question.
-      const result = await agentRunner.run([
-        { role: 'system', content: resumeChatSystem({ personality, target: session, memory, character }) },
-        ...history
-      ]);
-      return this.appendMessage(sessionId, 'assistant', result.content, result.trace);
+
+      // End of turn: stop accepting steers and persist the assistant reply. A steer
+      // that arrived after the loop's last drain (or during a non-steerable canvas
+      // turn) could NOT be folded into this reply — rather than park it as an orphan
+      // user row, we signal it `deferred` so the client re-sends it as a fresh turn
+      // that actually gets answered.
+      handle.acceptingSteers = false;
+      const assistant = this.appendMessage(sessionId, 'assistant', reply.content, reply.trace, nextTs());
+      for (const steerText of handle.drain()) {
+        handle.pushEvent({ type: 'steer_ack', text: steerText, deferred: true });
+      }
+      return assistant;
+    } catch (error) {
+      // The run threw AFTER the loop may have already persisted an in-flight steer
+      // (e.g. a hard auth/parse error on the next model call). Write a following
+      // assistant row so that committed steer is never left without a reply, then
+      // still surface the failure. Only when a steer was actually consumed, so a
+      // plain failed turn keeps its existing "no assistant row" behavior.
+      handle.acceptingSteers = false;
+      if (consumedSteers > 0) {
+        this.appendMessage(sessionId, 'assistant', 'I hit a problem and stopped before finishing — please try again.', undefined, nextTs());
+      }
+      throw error;
+    } finally {
+      runRegistry.release(sessionId, handle.runId);
     }
   }
 
-  private appendMessage(sessionId: string, role: ChatRole, content: string, trace?: ToolTraceEntry[]): ResumeMessage {
+  private appendMessage(sessionId: string, role: ChatRole, content: string, trace?: ToolTraceEntry[], createdAt?: string): ResumeMessage {
     const message: ResumeMessage = {
       id: randomUUID(),
       session_id: sessionId,
       role,
       content,
-      created_at: new Date().toISOString(),
+      created_at: createdAt ?? new Date().toISOString(),
       tool_trace: trace
     };
     resumeRepository.appendMessage(message);

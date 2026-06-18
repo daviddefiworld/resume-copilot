@@ -7,6 +7,9 @@ const router = Router();
 
 router.get('/messages', asyncHandler(memoryController.listMessages));
 router.post('/messages', asyncHandler(memoryController.sendMessage));
+// Streaming chat: owns its SSE response, so it is NOT wrapped in asyncHandler
+// (whose timeout race would try to send JSON after headers are already flushed).
+router.post('/messages/stream', memoryController.streamMessage);
 router.delete('/messages', asyncHandler(memoryController.clearMessages));
 router.post('/propose', asyncHandler(memoryController.propose));
 router.get('/items', asyncHandler(memoryController.listItems));

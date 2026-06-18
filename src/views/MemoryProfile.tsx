@@ -19,8 +19,13 @@ export default function MemoryProfile({ refreshKey }: { refreshKey: number }) {
   useEffect(load, [refreshKey]);
 
   async function remove(id: string): Promise<void> {
-    await api.deleteMemoryItem(id);
-    load();
+    setError('');
+    try {
+      await api.deleteMemoryItem(id);
+      load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
   }
 
   function startEdit(item: MemoryItem): void {
@@ -29,9 +34,14 @@ export default function MemoryProfile({ refreshKey }: { refreshKey: number }) {
   }
 
   async function saveEdit(id: string): Promise<void> {
-    await api.updateMemoryItem(id, draft);
-    setEditing(null);
-    load();
+    setError('');
+    try {
+      await api.updateMemoryItem(id, draft);
+      setEditing(null); // close only on success, so a failure keeps the edit form open
+      load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
   }
 
   const groups = items.reduce<Record<string, MemoryItem[]>>((acc, item) => {

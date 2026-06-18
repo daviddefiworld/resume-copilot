@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { resumeService } from '../services/resumeService.ts';
 import { exportService } from '../services/exportService.ts';
 import { param } from '../middleware/asyncHandler.ts';
+import { openSseStream } from '../middleware/sse.ts';
 
 // HTTP layer for resume sessions, their chat, analysis, drafts, versions, and
 // PDF export. Parses requests and delegates to the resume/export services.
@@ -34,8 +35,48 @@ export const resumeController = {
   },
 
   async sendMessage(req: Request, res: Response): Promise<void> {
-    const content = (req.body as { content?: string }).content ?? '';
-    res.status(201).json(await resumeService.sendMessage(param(req, 'id'), content));
+    const body = req.body as { content?: string; approvedCalls?: unknown };
+    res.status(201).json(
+      await resumeService.sendMessage(param(req, 'id'), body.content ?? '', approvedCallsOf(body.approvedCalls))
+    );
+  },
+
+  // Streaming variant of sendMessage: text streams as `delta` events, the
+  // persisted message arrives in `done`. Registered without asyncHandler — it
+  // owns its response and reports failures as an SSE `error` event.
+  async streamMessage(req: Request, res: Response): Promise<void> {
+    const body = req.body as { content?: string; approvedCalls?: unknown };
+    const send = openSseStream(res);
+    try {
+      const message = await resumeService.sendMessageStream(
+        param(req, 'id'),
+        body.content ?? '',
+        (text) => send({ type: 'delta', text }),
+        approvedCallsOf(body.approvedCalls),
+        // The same SSE sink carries live plan/status/steer_ack events (the client
+        // ignores unknown event types, so this is backward-compatible).
+        send
+      );
+      send({ type: 'done', message });
+    } catch (error) {
+      send({ type: 'error', error: error instanceof Error ? error.message : 'Request failed.' });
+    } finally {
+      res.end();
+    }
+  },
+
+  // Queue a steering message onto the session's in-flight run. Returns immediately;
+  // 409 when no run is accepting (the client then sends it as a fresh normal turn).
+  steer(req: Request, res: Response): void {
+    try {
+      res.json(resumeService.queueSteer(param(req, 'id'), (req.body as { content?: string }).content ?? ''));
+    } catch (error) {
+      if (error instanceof Error && error.name === 'NotRunning') {
+        res.status(409).json({ error: error.message });
+        return;
+      }
+      throw error;
+    }
   },
 
   // ---- Analysis & drafts ----
@@ -77,6 +118,13 @@ export const resumeController = {
     await sendPdf(req, res, 'inline');
   }
 };
+
+// Sanitize the optional approvedCalls field from a chat request: the explicit
+// one-turn approval tokens (callToken fingerprints) the user authorized. Anything
+// not a clean string array becomes an empty list (gate stays closed).
+function approvedCallsOf(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((t): t is string => typeof t === 'string') : [];
+}
 
 async function sendPdf(req: Request, res: Response, disposition: 'attachment' | 'inline'): Promise<void> {
   const version = resumeService.getVersion(param(req, 'id'));

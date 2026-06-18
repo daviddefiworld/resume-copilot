@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { memoryService } from '../services/memoryService.ts';
 import { param } from '../middleware/asyncHandler.ts';
+import { openSseStream } from '../middleware/sse.ts';
 import type { MemoryProposal } from '../../shared/types.ts';
 
 // HTTP layer for the memory chat and memory items. Parses requests and
@@ -14,6 +15,27 @@ export const memoryController = {
     const body = req.body as { content?: string; personalityId?: string };
     const reply = await memoryService.sendMessage(body.content ?? '', body.personalityId ?? '');
     res.status(201).json(reply);
+  },
+
+  // Streaming variant of sendMessage: the reply's text is pushed as `delta`
+  // events as it is generated, then the persisted message arrives in `done`.
+  // Registered without asyncHandler — it owns its response lifecycle and reports
+  // failures as an SSE `error` event once headers are flushed.
+  async streamMessage(req: Request, res: Response): Promise<void> {
+    const body = req.body as { content?: string; personalityId?: string };
+    const send = openSseStream(res);
+    try {
+      const message = await memoryService.sendMessageStream(
+        body.content ?? '',
+        body.personalityId ?? '',
+        (text) => send({ type: 'delta', text })
+      );
+      send({ type: 'done', message });
+    } catch (error) {
+      send({ type: 'error', error: error instanceof Error ? error.message : 'Request failed.' });
+    } finally {
+      res.end();
+    }
   },
 
   clearMessages(_req: Request, res: Response): void {
