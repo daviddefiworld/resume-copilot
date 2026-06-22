@@ -25,14 +25,26 @@ interface Route {
   original: string;
 }
 
-// The result of running one tool, as the loop needs it: text to feed back to the
-// model, whether it succeeded, and labels for the chat trace.
+// The result of running one tool, as the loop needs it: labels for the chat
+// trace, success, and TWO views of the output. `text` is the full, un-truncated
+// result shown verbatim in the chat trace (so the UI shows all the data);
+// `modelText` is the copy fed to the model, capped so one huge result can't blow
+// the token budget. They're equal for short results (errors, approvals).
 export interface ToolCallResult {
   text: string;
+  modelText: string;
+  // The COMPLETE raw response (pretty JSON) for the chat trace, so the UI shows
+  // every field the tool returned — not just the flattened text. Set for MCP calls.
+  raw?: string;
   ok: boolean;
   server: string;
   tool: string;
 }
+
+// How much of one tool result to feed the model (chars). Generous — the model
+// should see the whole response (including the structured output and any URL it
+// must hand the user) — but bounded so a huge scrape can't blow the token budget.
+const RESULT_CAP = 12_000;
 
 // Tool names exposed to the model must match ^[a-zA-Z0-9_-]{1,64}$.
 function sanitize(value: string): string {
@@ -72,20 +84,86 @@ function normalizeSchema(schema: unknown): Record<string, unknown> {
   return { type: 'object', properties: {} };
 }
 
-// Flatten an MCP tool result into text. Tool results are an array of content
-// blocks; we keep text blocks verbatim and JSON-encode anything else, capped so
-// a huge result can't blow the token budget.
-function textOf(result: unknown): string {
+// Serialize an MCP tool result into the text the model reads. A result is an
+// array of content blocks PLUS an optional `structuredContent` object — the typed
+// output many servers (Apify among them) return alongside, or instead of, a text
+// block, and where an actionable URL often lives. We keep text verbatim, surface
+// resource links by their URI, and append structuredContent when it isn't already
+// echoed in the text — so the model sees the WHOLE response, not just a summary.
+// Returns the full (un-truncated) text; the caller caps it for the model.
+function serializeResult(result: unknown): string {
   const blocks = isRecord(result) ? result.content : undefined;
-  if (!Array.isArray(blocks)) {
+  const parts: string[] = [];
+
+  if (Array.isArray(blocks)) {
+    for (const block of blocks) {
+      if (!isRecord(block)) {
+        parts.push(JSON.stringify(block));
+      } else if (block.type === 'text') {
+        parts.push(String(block.text ?? ''));
+      } else if (block.type === 'resource_link') {
+        // A pointer to an external resource — keep the URI so the model (and the
+        // link extractor) can use it; this is commonly the "view results" URL.
+        parts.push(`[resource: ${String(block.name ?? block.uri ?? '')}] ${String(block.uri ?? '')}`.trim());
+      } else if (block.type === 'resource' && isRecord(block.resource)) {
+        const r = block.resource;
+        parts.push(typeof r.text === 'string'
+          ? String(r.text)
+          : `[resource ${String(r.uri ?? '')}${r.mimeType ? ` (${String(r.mimeType)})` : ''}]`);
+      } else {
+        // image / audio / unknown — JSON-encode so any URI or metadata survives.
+        parts.push(JSON.stringify(block));
+      }
+    }
+  } else if (isRecord(result) && 'toolResult' in result) {
     // Legacy/compat results carry a `toolResult` instead of content blocks.
-    return isRecord(result) && 'toolResult' in result ? JSON.stringify(result.toolResult) : '';
+    parts.push(JSON.stringify(result.toolResult));
   }
-  const text = blocks
-    .map((block) => (isRecord(block) && block.type === 'text' ? String(block.text ?? '') : JSON.stringify(block)))
-    .join('\n')
-    .trim();
-  return text.length > 8000 ? `${text.slice(0, 8000)}\n…(truncated)` : text;
+
+  // structuredContent is the typed data payload. It's usually an object, but some
+  // servers return an ARRAY (a list of results) — include that too. Anything
+  // non-null is real data the model and the user must see, so don't require an
+  // object here (the old isRecord check silently dropped array payloads).
+  const structuredContent = isRecord(result) ? result.structuredContent : undefined;
+  if (structuredContent !== undefined && structuredContent !== null) {
+    const structured = JSON.stringify(structuredContent);
+    // Servers often ALSO echo structuredContent as a text block; only add it when
+    // the text doesn't already contain it, so the model isn't fed a duplicate.
+    if (structured && !parts.some((p) => p.includes(structured))) parts.push(`Structured result:\n${structured}`);
+  }
+
+  return parts.join('\n').trim();
+}
+
+// Pretty-print a value as JSON for the chat trace's full-response view. MCP
+// results arrive as plain JSON over the wire, so this won't hit a cycle; the
+// guard is just defensive.
+function rawJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+// The full detail of a thrown tool error for the trace — the JSON-RPC code and
+// data the SDK attaches, not just the one-line message — so a failed call shows
+// everything the server reported, not only its message field.
+function rawError(error: unknown): string {
+  const detail: Record<string, unknown> = { message: errorMessage(error) };
+  if (error && typeof error === 'object') {
+    const e = error as { code?: unknown; data?: unknown };
+    if (e.code !== undefined) detail.code = e.code;
+    if (e.data !== undefined) detail.data = e.data;
+  }
+  return rawJson(detail);
+}
+
+// Cap the serialized text fed to the model. Marks the cut so the model knows the
+// result continued (and can ask to narrow the query) rather than treating the
+// truncated tail as the whole answer.
+function capForModel(text: string): string {
+  return text.length > RESULT_CAP ? `${text.slice(0, RESULT_CAP)}\n…(truncated — result was longer)` : text;
 }
 
 // Owns every live MCP connection. Connects servers lazily, exposes their tools
@@ -122,11 +200,13 @@ class McpManager {
   async callTool(qualifiedName: string, args: unknown, signal?: AbortSignal): Promise<ToolCallResult> {
     const route = this.route.get(qualifiedName);
     if (!route) {
-      return { text: `Tool "${qualifiedName}" is not available.`, ok: false, server: 'unknown', tool: qualifiedName };
+      const text = `Tool "${qualifiedName}" is not available.`;
+      return { text, modelText: text, ok: false, server: 'unknown', tool: qualifiedName };
     }
     const entry = this.clients.get(route.serverId);
     if (!entry) {
-      return { text: `The server for "${qualifiedName}" is not connected.`, ok: false, server: route.serverName, tool: route.original };
+      const text = `The server for "${qualifiedName}" is not connected.`;
+      return { text, modelText: text, ok: false, server: route.serverName, tool: route.original };
     }
     try {
       const result = await entry.client.callTool(
@@ -134,9 +214,14 @@ class McpManager {
         undefined,
         { timeout: TOOL_TIMEOUT_MS, resetTimeoutOnProgress: false, signal }
       );
-      return { text: textOf(result), ok: result.isError !== true, server: route.serverName, tool: route.original };
+      // Three views of the same response: `raw` is the COMPLETE object (every
+      // field, for the chat trace), `text` is the flattened readable result, and
+      // `modelText` is `text` capped so a huge result can't blow the token budget.
+      const text = serializeResult(result);
+      return { text, modelText: capForModel(text), raw: rawJson(result), ok: result.isError !== true, server: route.serverName, tool: route.original };
     } catch (error) {
-      return { text: errorMessage(error), ok: false, server: route.serverName, tool: route.original };
+      const text = errorMessage(error);
+      return { text, modelText: text, raw: rawError(error), ok: false, server: route.serverName, tool: route.original };
     }
   }
 

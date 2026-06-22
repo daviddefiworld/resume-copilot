@@ -31,6 +31,69 @@ export interface ChatMessage {
   name?: string;
 }
 
+// One selectable answer the agent offers for a quick-pick question. `label` is
+// the text both shown on the chip and sent back as the user's reply when picked;
+// `description` is an optional one-line hint under it.
+export interface AgentQuestionOption {
+  label: string;
+  description?: string;
+}
+
+// A structured "choose an answer" the agent embeds in its reply as a fenced
+// ```ask block. The chat parses it out of the prose and renders it as a
+// select-card (clickable chips + a free-text "Other" field) so the user can
+// answer in one click. Purely a UI affordance — the chosen label is sent back as
+// an ordinary user message, so nothing else in the pipeline needs to know about it.
+export interface AgentQuestion {
+  question: string;
+  // A very short chip label for the card (e.g. "Role", "Timezone"). Optional.
+  header?: string;
+  // When true the user can pick several options before sending; default single-pick.
+  multiSelect?: boolean;
+  options: AgentQuestionOption[];
+}
+
+// A structured "start a job hunt" the copilot embeds in its reply as a fenced
+// ```session block when the conversation turns to one specific opportunity. The
+// chat parses it out of the prose and renders an action card whose button opens a
+// dedicated job-hunt session seeded with `kickoff` as its first message — so the
+// focused work on one role lives in its own workspace, not the companion chat.
+export interface SessionSuggestion {
+  // The session label, usually "Company — Role".
+  title: string;
+  // The first message to seed the new session with, written in the user's voice
+  // (the role, the company, and any job description gathered so far) so the new
+  // workspace starts warm instead of from scratch.
+  kickoff: string;
+  // An optional one-line nudge shown on the card under the title.
+  note?: string;
+  // The concrete job/company identity the copilot already gathered, carried into
+  // the new session so it starts with the target known instead of re-deriving it
+  // from the kickoff prose. All optional — included only when actually known.
+  company?: string;
+  role?: string;
+  location?: string;
+  jobDescription?: string;
+  // A posting or company URL, if the copilot found one.
+  link?: string;
+}
+
+// One step in the agent's live "working process" for the current turn — what it
+// is doing right now (thinking, or running a named tool), shown in the pending
+// bubble so the user can watch it work. Built on the client from the run's
+// `status` events and discarded when the turn lands; never persisted.
+export interface AgentActivity {
+  // Stable per-turn ordinal, used as the React key.
+  id: number;
+  // Human label, e.g. "Thinking" or "Using web_search".
+  label: string;
+  // True once a later step has started — done steps show a tick, the last is live.
+  done: boolean;
+  // The tool this step is running, when it's a tool step (absent for "Thinking").
+  // Lets the UI tell an in-flight tool call apart from the model writing prose.
+  tool?: string;
+}
+
 // An OpenAI/OpenRouter-style function tool exposed to the model. `parameters`
 // is the tool's JSON Schema (an MCP tool's inputSchema maps straight onto it).
 export interface OpenAITool {
@@ -69,6 +132,10 @@ export interface Personality {
   // Both optional — the UI falls back to a default robot + a colour from the id.
   icon?: string;
   accent?: string;
+  // Optional avatar image — a path like '/personalities/sox.webp' or a URL.
+  // When set it renders in place of `icon` everywhere the mark shows; a failed
+  // load falls back to the icon. Built-ins ship images under /personalities.
+  image?: string;
 }
 
 // The user's copilot configuration: which personality drives the main chat.
@@ -403,7 +470,13 @@ export interface ToolTraceEntry {
   server: string;
   tool: string;
   args: unknown;
+  // The readable result text (content blocks + structured data, flattened).
   result: string;
+  // The COMPLETE raw response object, pretty-printed JSON — every field the tool
+  // returned (all content blocks, structuredContent, metadata, errors), not just
+  // the flattened text. Shown in chat so the full data is visible. MCP calls only;
+  // absent for local/workspace tools and approval refusals (their result is whole).
+  raw?: string;
   ok: boolean;
   // Set when the agent tried to call an external (non-read-only) tool without
   // approval and it was refused. The UI uses this to offer an "approve & send"

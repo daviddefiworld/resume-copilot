@@ -24,15 +24,28 @@ export const memoryController = {
   async streamMessage(req: Request, res: Response): Promise<void> {
     const body = req.body as { content?: string; personalityId?: string };
     const send = openSseStream(res);
+    // Stop button / client disconnect closes the socket → abort the run so it stops
+    // calling the model instead of finishing (and billing) in the background.
+    const stop = new AbortController();
+    let finished = false;
+    res.on('close', () => { if (!finished) stop.abort(); });
     try {
       const message = await memoryService.sendMessageStream(
         body.content ?? '',
         body.personalityId ?? '',
-        (text) => send({ type: 'delta', text })
+        (text) => send({ type: 'delta', text }),
+        // Live "thinking"/tool status events ride the same SSE stream; the client
+        // ignores unknown event types, so this stays backward-compatible.
+        send,
+        stop.signal
       );
+      finished = true;
       send({ type: 'done', message });
     } catch (error) {
-      send({ type: 'error', error: error instanceof Error ? error.message : 'Request failed.' });
+      // A user stop ('Cancelled') is not a failure — the socket is already gone.
+      if (!(error instanceof Error && error.name === 'Cancelled')) {
+        send({ type: 'error', error: error instanceof Error ? error.message : 'Request failed.' });
+      }
     } finally {
       res.end();
     }
@@ -41,6 +54,13 @@ export const memoryController = {
   clearMessages(_req: Request, res: Response): void {
     memoryService.clearMessages();
     res.json({ ok: true });
+  },
+
+  // Flush the un-reflected tail of the copilot chat into character memory. Fired
+  // when the user leaves the copilot chat for a job-hunt session. Returns at once;
+  // the reflection itself runs in the background server-side.
+  flushReflection(_req: Request, res: Response): void {
+    res.json(memoryService.flushCharacterReflection());
   },
 
   async propose(_req: Request, res: Response): Promise<void> {

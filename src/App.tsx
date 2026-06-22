@@ -11,7 +11,7 @@ import Settings from './views/Settings.tsx';
 import Home from './views/Home.tsx';
 import ATSAnalyzer from './views/ATSAnalyzer.tsx';
 import ProfileSetup from './components/ProfileSetup.tsx';
-import type { Personality, Profile, ProfilesView, ResumeSession, Template } from '../shared/types.ts';
+import type { Personality, Profile, ProfilesView, ResumeSession, SessionSuggestion, Template } from '../shared/types.ts';
 
 export interface ATSPrefill {
   resume: string;
@@ -102,7 +102,19 @@ export default function App() {
     applyProfiles(await api.deleteProfile(id), true);
   }
 
+  // Leaving the copilot chat for a job-hunt session (new or existing): fold any
+  // un-reflected tail of the conversation into the character's memory now, so a
+  // short tail below the regular every-6 reflection cadence isn't lost. Only fires
+  // when the copilot chat is the pane on screen; fire-and-forget so it never
+  // blocks the navigation it rides on.
+  function flushCopilotMemoryOnLeave(): void {
+    if (view === 'copilot' && !activeSessionId && !isStartingResume) {
+      void api.flushCharacterReflection().catch(() => {});
+    }
+  }
+
   async function newResume(): Promise<void> {
+    flushCopilotMemoryOnLeave();
     setActiveSessionId(null);
     setView('home');
     setIsStartingResume(true);
@@ -113,9 +125,35 @@ export default function App() {
     // message to the session. SessionView shows it immediately and Sox replies
     // there — instead of blocking on the agent here and landing on a finished
     // thread where the message only appears alongside the reply.
-    const session = await api.createSession({ initial_message: content });
+    const session = await api.createSession({ initial_message: content, personality_id: personaId || undefined });
     await loadSessions();
     setPendingMessage({ sessionId: session.id, content });
+    setIsStartingResume(false);
+    setActiveSessionId(session.id);
+  }
+
+  // Spin up a job-hunt session straight from the companion chat: Sox offered it
+  // (a ```session block → action card), the user clicked, and we open a workspace
+  // pre-named and seeded with the kickoff message it wrote. Same path as
+  // startResume, but with the title Sox chose and from the copilot pane (so its
+  // un-reflected tail is flushed to memory on the way out).
+  async function startJobHuntFromCopilot(suggestion: SessionSuggestion): Promise<void> {
+    flushCopilotMemoryOnLeave();
+    // Carry the concrete job/company identity the copilot already gathered into the
+    // new session, so it opens with the target known instead of re-deriving it from
+    // the kickoff prose. A posting/company link rides along in the company notes.
+    const session = await api.createSession({
+      title: suggestion.title,
+      initial_message: suggestion.kickoff,
+      personality_id: personaId || undefined,
+      company_name: suggestion.company,
+      job_title: suggestion.role,
+      location: suggestion.location,
+      job_description: suggestion.jobDescription,
+      company_notes: suggestion.link ? `Job posting: ${suggestion.link}` : undefined
+    });
+    await loadSessions();
+    setPendingMessage({ sessionId: session.id, content: suggestion.kickoff });
     setIsStartingResume(false);
     setActiveSessionId(session.id);
   }
@@ -142,6 +180,7 @@ export default function App() {
   }
 
   function selectSession(id: string): void {
+    flushCopilotMemoryOnLeave();
     setIsStartingResume(false);
     setActiveSessionId(id);
   }
@@ -181,6 +220,7 @@ export default function App() {
             key={activeSessionId}
             sessionId={activeSessionId}
             templates={templates}
+            personas={personas}
             onSessionChanged={loadSessions}
             onOpenAts={openAts}
             initialMessage={pendingMessage?.sessionId === activeSessionId ? pendingMessage.content : null}
@@ -189,7 +229,13 @@ export default function App() {
         ) : isStartingResume ? (
           <NewResumeStart onSend={startResume} />
         ) : view === 'copilot' ? (
-          <CopilotChat key={activeProfileId ?? 'none'} persona={activePersona} onMemorySaved={() => setMemoryKey((k) => k + 1)} />
+          <CopilotChat
+            key={activeProfileId ?? 'none'}
+            profileId={activeProfileId}
+            persona={activePersona}
+            onMemorySaved={() => setMemoryKey((k) => k + 1)}
+            onStartSession={startJobHuntFromCopilot}
+          />
         ) : view === 'memory' ? (
           <MemoryProfile key={activeProfileId ?? 'none'} refreshKey={memoryKey} />
         ) : view === 'ats' ? (

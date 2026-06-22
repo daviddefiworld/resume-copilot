@@ -2,7 +2,7 @@ import { BookOpen, Briefcase, Gauge, Settings as SettingsIcon, Sparkles, Target,
 import { useState } from 'react';
 import type { KeyboardEvent, MouseEvent } from 'react';
 import type { Personality, ResumeSession } from '../../shared/types.ts';
-import { personaVisual } from '../personaVisual.tsx';
+import { PersonaMark } from '../personaVisual.tsx';
 
 export type View = 'home' | 'copilot' | 'memory' | 'ats' | 'settings';
 
@@ -36,7 +36,6 @@ export default function Sidebar({
   onRenameSession,
   onDeleteSession
 }: SidebarProps) {
-  const brand = personaVisual(persona);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState('');
 
@@ -67,7 +66,7 @@ export default function Sidebar({
   return (
     <aside className="sidebar">
       <div className="sidebarBrand">
-        <span className="brandMark" style={{ background: brand.gradient }}><brand.Icon size={18} /></span>
+        <PersonaMark persona={persona} size={18} className="brandMark" />
         <span className="brandName">{persona?.name ?? 'Sox'}</span>
       </div>
 
@@ -85,7 +84,7 @@ export default function Sidebar({
 
       <nav className="sidebarNav">
         <button className={navActive('copilot') ? 'active' : ''} onClick={() => onSelectView('copilot')}>
-          <Sparkles size={16} /> Chat
+          <Sparkles size={16} /> Chat with {persona?.name ?? 'Sox'}
         </button>
         <button className={navActive('memory') ? 'active' : ''} onClick={() => onSelectView('memory')}>
           <BookOpen size={16} /> Your story

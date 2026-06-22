@@ -62,6 +62,11 @@ class DesktopApp {
       minWidth: 980,
       minHeight: 680,
       title: 'Sox Job Hunter Copilot',
+      // Sox's face as the window/taskbar icon. Generated from the .webp avatar by
+      // `npm run icon`; bundled into dist/ by Vite (from public/) so it resolves
+      // both in dev (public/) and in the packaged asar (dist/). The installed
+      // .exe/shortcut icon is set separately by electron-builder (build.icon).
+      icon: path.join(__dirname, '..', this.devUrl() ? 'public' : 'dist', 'icon.png'),
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,

@@ -86,7 +86,8 @@ interface CanvasTurn {
 // reason surfaces immediately instead of silently doubling the latency.
 function isHardAiFailure(error: unknown): boolean {
   const name = (error as { name?: string })?.name ?? '';
-  if (name === 'TimeoutError' || name === 'AbortError') return true;
+  // A user stop ('Cancelled') must propagate, not fall back to a fresh agent reply.
+  if (name === 'TimeoutError' || name === 'AbortError' || name === 'Cancelled') return true;
   const message = ((error as { message?: string })?.message ?? '').toLowerCase();
   return message.includes('timed out')
     || message.includes('could not reach openrouter')
@@ -191,10 +192,11 @@ class ResumeService {
     content: string,
     onDelta: StreamDelta,
     approvedCalls: string[] = [],
-    pushEvent: (event: RunEvent) => void = () => {}
+    pushEvent: (event: RunEvent) => void = () => {},
+    signal?: AbortSignal
   ): Promise<ResumeMessage> {
     return this.runChat(sessionId, content, pushEvent, (messages, localTools, steer) =>
-      agentRunner.runStream(messages, { localTools, approvedCalls, steer }, onDelta));
+      agentRunner.runStream(messages, { localTools, approvedCalls, steer, signal }, onDelta), signal);
   }
 
   // Queue a steering message onto the session's in-flight run, so the agent folds
@@ -218,7 +220,8 @@ class ResumeService {
     sessionId: string,
     content: string,
     pushEvent: (event: RunEvent) => void,
-    run: (messages: ChatMessage[], localTools: LocalTool[], steer: RunHandle) => Promise<AgentResult>
+    run: (messages: ChatMessage[], localTools: LocalTool[], steer: RunHandle) => Promise<AgentResult>,
+    signal?: AbortSignal
   ): Promise<ResumeMessage> {
     const session = this.getSession(sessionId);
     const text = String(content || '').trim();
@@ -285,7 +288,7 @@ class ResumeService {
         try {
           const turn = await openRouter.json<CanvasTurn>(
             [{ role: 'system', content: resumeCanvasTurnSystem({ personality, current, memory, character }) }, ...history],
-            { model: settingsService.finalModel() }
+            { model: settingsService.finalModel(), signal }
           );
           if (turn.edited && turn.content) {
             this.saveVersion(sessionId, { content: turn.content, strategy: turn.strategy ?? current.strategy }, latest.template_id);
@@ -310,7 +313,16 @@ class ResumeService {
       // user row, we signal it `deferred` so the client re-sends it as a fresh turn
       // that actually gets answered.
       handle.acceptingSteers = false;
-      const assistant = this.appendMessage(sessionId, 'assistant', reply.content, reply.trace, nextTs());
+      // Never persist a reply that claims a document write the trace doesn't back.
+      const safeContent = documentService.reconcileClaims(reply.content, reply.trace);
+      const assistant = this.appendMessage(sessionId, 'assistant', safeContent, reply.trace, nextTs());
+      // Name the session after its company the moment the conversation reveals it.
+      // Runs only while the company is still unknown (so it fires early, then stops),
+      // and is best-effort so it can never break the turn. The reply text is already
+      // on screen via streamed deltas, so this brief extraction is not felt.
+      if (!session.company_name.trim()) {
+        try { await this.extractTarget(sessionId); } catch { /* session naming is best-effort */ }
+      }
       for (const steerText of handle.drain()) {
         handle.pushEvent({ type: 'steer_ack', text: steerText, deferred: true });
       }
@@ -322,7 +334,9 @@ class ResumeService {
       // still surface the failure. Only when a steer was actually consumed, so a
       // plain failed turn keeps its existing "no assistant row" behavior.
       handle.acceptingSteers = false;
-      if (consumedSteers > 0) {
+      // A user stop saves no reply (it was their choice). A genuine failure after a
+      // committed steer still gets a following assistant row so the steer isn't orphaned.
+      if (consumedSteers > 0 && (error as Error)?.name !== 'Cancelled') {
         this.appendMessage(sessionId, 'assistant', 'I hit a problem and stopped before finishing — please try again.', undefined, nextTs());
       }
       throw error;
@@ -358,13 +372,23 @@ class ResumeService {
     const t = await openRouter.json<Partial<TargetExtract>>(jobTargetExtractionPrompt(transcript));
     const pick = (next: string | undefined, current: string) => (next?.trim() ? next.trim() : current);
 
+    const hadCompany = Boolean(session.company_name.trim());
+    const company = pick(t.company_name, session.company_name);
+    const jobTitle = pick(t.job_title, session.job_title);
+    // Name the session after its company the FIRST time the conversation reveals it;
+    // before that, track the job title; once it has been company-named, leave the
+    // title alone so a later manual rename sticks.
+    let title = session.title;
+    if (company && !hadCompany) title = company;
+    else if (!hadCompany) title = jobTitle || session.title;
+
     return this.updateTarget(sessionId, {
-      company_name: pick(t.company_name, session.company_name),
-      job_title: pick(t.job_title, session.job_title),
+      company_name: company,
+      job_title: jobTitle,
       location: pick(t.location, session.location),
       job_description: pick(t.job_description, session.job_description),
       company_notes: pick(t.company_notes, session.company_notes),
-      title: pick(t.job_title, session.job_title) || session.title
+      title
     });
   }
 
@@ -397,9 +421,12 @@ class ResumeService {
     }
     const personality = personalityService.get(session.personality_id);
     // The resume content itself uses the final-resume model (falls back to primary).
+    // It's a single large structured-JSON generation, so it legitimately runs longer
+    // than the 90s default — give it a wider per-call ceiling (still under the route's
+    // own asyncHandler cap) so a slow final model finishes instead of being aborted.
     const draft = await openRouter.json<ResumeDraft>(
       resumeDraftPrompt({ personality, analysis: session.analysis as JobAnalysis, memory, target: session }),
-      { model: settingsService.finalModel() }
+      { model: settingsService.finalModel(), timeoutMs: 140_000 }
     );
     const version = this.saveVersion(sessionId, draft, getTemplate(templateId).id);
 

@@ -14,7 +14,13 @@
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
       "Bash(git checkout *)",
-      "PowerShell($env:NODE_NO_WARNINGS=1; $p = Start-Process node -ArgumentList '--disable-warning=ExperimentalWarning','server.ts' -PassThru -RedirectStandardOutput 'e:\\\\2026_2\\\\self-tool\\\\.srv.out' -RedirectStandardError 'e:\\\\2026_2\\\\self-tool\\\\.srv.err'; Start-Sleep -Seconds 3; \"PID=$\\($p.Id\\)\"; \"--- health ---\"; try { \\(Invoke-WebRequest -Uri 'http://127.0.0.1:3500/api/health' -UseBasicParsing -TimeoutSec 5\\).Content } catch { \"health error: $\\($_.Exception.Message\\)\" })"
+      "PowerShell($env:NODE_NO_WARNINGS=1; $p = Start-Process node -ArgumentList '--disable-warning=ExperimentalWarning','server.ts' -PassThru -RedirectStandardOutput 'e:\\\\2026_2\\\\self-tool\\\\.srv.out' -RedirectStandardError 'e:\\\\2026_2\\\\self-tool\\\\.srv.err'; Start-Sleep -Seconds 3; \"PID=$\\($p.Id\\)\"; \"--- health ---\"; try { \\(Invoke-WebRequest -Uri 'http://127.0.0.1:3500/api/health' -UseBasicParsing -TimeoutSec 5\\).Content } catch { \"health error: $\\($_.Exception.Message\\)\" })",
+      "PowerShell($ProgressPreference='SilentlyContinue'; New-Item -ItemType Directory -Force -Path \"public/personalities\" | Out-Null; try { $r = Invoke-WebRequest -Uri \"https://upload.wikimedia.org/wikipedia/commons/8/80/Wikipedia-logo-v2.svg\" -UseBasicParsing -TimeoutSec 20; Write-Output \\(\"OK status=\" + $r.StatusCode + \" bytes=\" + $r.RawContentLength\\) } catch { Write-Output \\(\"FAIL: \" + $_.Exception.Message\\) })",
+      "Bash(command -v magick)",
+      "Bash(command -v convert)",
+      "Bash(command -v ffmpeg)",
+      "Bash(node -e \"require.resolve\\('sharp'\\)\")",
+      "Bash(git commit *)"
     ]
   }
 }

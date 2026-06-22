@@ -3,10 +3,17 @@ import type { ChatMessage, OpenAITool, ToolCall } from '../../shared/types.ts';
 
 const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 
+// Default ceiling on one outbound AI call. Enough for an agent step or a normal
+// completion; the heavy single-shot generations (a full resume draft) pass a
+// larger timeoutMs since they legitimately run longer than this.
+const DEFAULT_TIMEOUT_MS = 90_000;
+
 interface RequestOptions {
   temperature: number;
   responseFormat?: { type: 'json_object' };
   model?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 interface CallOptions {
@@ -14,14 +21,17 @@ interface CallOptions {
   // Override the model for this call (e.g. the final-resume model). Defaults to
   // the configured primary model.
   model?: string;
+  // An external abort signal (the agent run's overall budget, or a user Stop).
+  // Combined with the per-call cap so whichever fires first ends the request.
+  signal?: AbortSignal;
+  // Per-call ceiling in ms (defaults to DEFAULT_TIMEOUT_MS). Heavy generations
+  // raise it; the agent loop leaves it at the default and bounds itself separately.
+  timeoutMs?: number;
 }
 
 interface CompleteOptions extends CallOptions {
   // Tools the model may call this turn. Omitted/empty → a plain completion.
   tools?: OpenAITool[];
-  // An external deadline (the agent run's overall budget). Combined with the
-  // per-call 90s cap so whichever fires first ends the request.
-  signal?: AbortSignal;
 }
 
 // One assistant turn: its text and any tool calls it wants run. `content` is ''
@@ -100,13 +110,13 @@ class OpenRouterService {
   // value. Throws if the model returns unparseable output. Not every model on
   // OpenRouter accepts response_format: json_object, so fall back to a plain
   // request (our prompts already demand JSON and parseJson is tolerant).
-  async json<T = unknown>(messages: ChatMessage[], { temperature = 0.2, model }: CallOptions = {}): Promise<T> {
+  async json<T = unknown>(messages: ChatMessage[], { temperature = 0.2, model, signal, timeoutMs }: CallOptions = {}): Promise<T> {
     let content: string;
     try {
-      content = await this.request(messages, { temperature, model, responseFormat: { type: 'json_object' } });
+      content = await this.request(messages, { temperature, model, signal, timeoutMs, responseFormat: { type: 'json_object' } });
     } catch (error) {
       if (!unsupportedJsonFormat(error)) throw error;
-      content = await this.request(messages, { temperature, model });
+      content = await this.request(messages, { temperature, model, signal, timeoutMs });
     }
     return this.parseJson<T>(content);
   }
@@ -114,7 +124,7 @@ class OpenRouterService {
   // Agentic turn: send the conversation plus the tools the model may call, and
   // return the assistant message (text and/or tool calls). The agent loop owns
   // executing the calls and deciding when to stop.
-  async complete(messages: ChatMessage[], { tools, temperature = 0.4, model, signal }: CompleteOptions = {}): Promise<AssistantMessage> {
+  async complete(messages: ChatMessage[], { tools, temperature = 0.4, model, signal, timeoutMs }: CompleteOptions = {}): Promise<AssistantMessage> {
     const body: Record<string, unknown> = {
       model: model || settingsService.model(),
       messages,
@@ -124,7 +134,7 @@ class OpenRouterService {
       body.tools = tools;
       body.tool_choice = 'auto';
     }
-    const message = await this.postChat(body, signal);
+    const message = await this.postChat(body, signal, timeoutMs);
     return { content: typeof message.content === 'string' ? message.content : '', tool_calls: message.tool_calls };
   }
 
@@ -134,7 +144,7 @@ class OpenRouterService {
   // loop treats a streamed turn exactly like a buffered one.
   async completeStream(
     messages: ChatMessage[],
-    { tools, temperature = 0.4, model, signal }: CompleteOptions = {},
+    { tools, temperature = 0.4, model, signal, timeoutMs }: CompleteOptions = {},
     onDelta: StreamDelta
   ): Promise<AssistantMessage> {
     const body: Record<string, unknown> = {
@@ -147,11 +157,11 @@ class OpenRouterService {
       body.tools = tools;
       body.tool_choice = 'auto';
     }
-    const message = await this.postChatStream(body, onDelta, signal);
+    const message = await this.postChatStream(body, onDelta, signal, timeoutMs);
     return { content: typeof message.content === 'string' ? message.content : '', tool_calls: message.tool_calls };
   }
 
-  private async request(messages: ChatMessage[], { temperature, responseFormat, model }: RequestOptions): Promise<string> {
+  private async request(messages: ChatMessage[], { temperature, responseFormat, model, signal, timeoutMs }: RequestOptions): Promise<string> {
     const body: Record<string, unknown> = {
       model: model || settingsService.model(),
       messages,
@@ -160,7 +170,7 @@ class OpenRouterService {
     if (responseFormat) {
       body.response_format = responseFormat;
     }
-    const message = await this.postChat(body);
+    const message = await this.postChat(body, signal, timeoutMs);
     if (typeof message.content !== 'string') {
       throw new Error('OpenRouter returned an empty response.');
     }
@@ -171,7 +181,7 @@ class OpenRouterService {
   // buffered and streaming requests go through here; the caller decides how to
   // read the body. An optional external signal (the agent's run deadline) is
   // combined with the per-call cap so whichever fires first ends the request.
-  private async dispatch(body: Record<string, unknown>, externalSignal?: AbortSignal): Promise<Response> {
+  private async dispatch(body: Record<string, unknown>, externalSignal?: AbortSignal, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Response> {
     const apiKey = settingsService.apiKey();
     if (!apiKey) {
       throw new Error('OpenRouter API key is not set. Add it in Settings.');
@@ -180,8 +190,7 @@ class OpenRouterService {
     // Bound the whole request so a stalled connection fails cleanly with a clear
     // message instead of hanging or surfacing a bare "fetch failed". When the
     // caller passes a run deadline, abort as soon as either fires.
-    const perCall = AbortSignal.timeout(90_000);
-    const signal = externalSignal ? AbortSignal.any([perCall, externalSignal]) : perCall;
+    const signal = externalSignal ? AbortSignal.any([AbortSignal.timeout(timeoutMs), externalSignal]) : AbortSignal.timeout(timeoutMs);
 
     let response: Response;
     try {
@@ -196,14 +205,7 @@ class OpenRouterService {
         signal
       });
     } catch (error) {
-      if ((error as Error).name === 'TimeoutError') {
-        throw new Error('OpenRouter timed out after 90s. The network or the model is slow — try again.');
-      }
-      // The request never reached OpenRouter (DNS, refused connection, proxy,
-      // TLS, connect timeout). `fetch` only says "fetch failed" — the real
-      // reason is on the cause, so surface it.
-      throw new Error(`Could not reach OpenRouter: ${describeNetworkError(error)}. ` +
-        'Check your internet connection, VPN/proxy, or firewall.');
+      throw this.transportError(error, timeoutMs);
     }
 
     if (!response.ok) {
@@ -213,10 +215,45 @@ class OpenRouterService {
     return response;
   }
 
+  // Shape a transport-phase failure into a clear, user-facing error. Applied to
+  // BOTH the initial fetch and the body read (json()/stream reader) — the per-call
+  // timeout can fire while the model is still streaming a long buffered response,
+  // and that abort lands on the body read, NOT the fetch. Without shaping it there
+  // too, the raw "operation was aborted due to timeout" DOMException reaches the UI.
+  private transportError(error: unknown, timeoutMs: number): Error {
+    const name = (error as Error)?.name;
+    // A user Stop aborts via an AbortController ('AbortError'), distinct from the
+    // per-call/run timeout ('TimeoutError'). Surface the canonical 'Cancelled'
+    // error every layer already swallows, not a misleading network failure.
+    if (name === 'AbortError') {
+      const cancelled = new Error('Request cancelled by the user.');
+      cancelled.name = 'Cancelled';
+      return cancelled;
+    }
+    if (name === 'TimeoutError') {
+      return new Error(`OpenRouter timed out after ${Math.round(timeoutMs / 1000)}s. The network or the model is slow — try again.`);
+    }
+    // A real transport failure (DNS, refused, proxy, TLS, connection reset) carries
+    // the underlying reason on `error.cause`; `fetch` itself only says "fetch
+    // failed". An app-level error (no cause) is already clean — pass it through.
+    if ((error as { cause?: unknown })?.cause) {
+      return new Error(`Could not reach OpenRouter: ${describeNetworkError(error)}. ` +
+        'Check your internet connection, VPN/proxy, or firewall.');
+    }
+    return error instanceof Error ? error : new Error('OpenRouter request failed.');
+  }
+
   // Buffered completion: read the whole JSON body and return the one message.
-  private async postChat(body: Record<string, unknown>, externalSignal?: AbortSignal): Promise<RawMessage> {
-    const response = await this.dispatch(body, externalSignal);
-    const data = (await response.json()) as CompletionResponse;
+  private async postChat(body: Record<string, unknown>, externalSignal?: AbortSignal, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<RawMessage> {
+    const response = await this.dispatch(body, externalSignal, timeoutMs);
+    let data: CompletionResponse;
+    try {
+      data = (await response.json()) as CompletionResponse;
+    } catch (error) {
+      // The timeout can elapse here, while the model is still producing the
+      // (un-streamed) response — shape that abort like any other transport error.
+      throw this.transportError(error, timeoutMs);
+    }
     const message = data.choices?.[0]?.message;
     if (!message) {
       throw new Error('OpenRouter returned an empty response.');
@@ -230,9 +267,10 @@ class OpenRouterService {
   private async postChatStream(
     body: Record<string, unknown>,
     onDelta: StreamDelta,
-    externalSignal?: AbortSignal
+    externalSignal?: AbortSignal,
+    timeoutMs = DEFAULT_TIMEOUT_MS
   ): Promise<RawMessage> {
-    const response = await this.dispatch(body, externalSignal);
+    const response = await this.dispatch(body, externalSignal, timeoutMs);
     if (!response.body) {
       throw new Error('OpenRouter returned no response stream.');
     }
@@ -243,40 +281,46 @@ class OpenRouterService {
     let content = '';
     const toolCalls: ToolCall[] = [];
 
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      // Each SSE field is one line; process every complete line and keep any
-      // trailing partial in the buffer until its newline arrives.
-      let newline: number;
-      while ((newline = buffer.indexOf('\n')) !== -1) {
-        const line = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-        // Skip blanks and ': OPENROUTER PROCESSING' keep-alive comments.
-        if (!line.startsWith('data:')) continue;
-        const data = line.slice(5).trim();
-        if (data === '[DONE]') continue;
-        let chunk: StreamChunk;
-        try {
-          chunk = JSON.parse(data) as StreamChunk;
-        } catch {
-          continue; // a malformed/partial payload; ignore it
-        }
-        const delta = chunk.choices?.[0]?.delta;
-        if (!delta) continue;
-        if (typeof delta.content === 'string' && delta.content) {
-          content += delta.content;
-          onDelta(delta.content);
-        }
-        for (const tc of delta.tool_calls ?? []) {
-          const index = tc.index ?? 0;
-          const call = (toolCalls[index] ??= { id: '', type: 'function', function: { name: '', arguments: '' } });
-          if (tc.id) call.id = tc.id;
-          if (tc.function?.name) call.function.name += tc.function.name;
-          if (tc.function?.arguments) call.function.arguments += tc.function.arguments;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // Each SSE field is one line; process every complete line and keep any
+        // trailing partial in the buffer until its newline arrives.
+        let newline: number;
+        while ((newline = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          // Skip blanks and ': OPENROUTER PROCESSING' keep-alive comments.
+          if (!line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          if (data === '[DONE]') continue;
+          let chunk: StreamChunk;
+          try {
+            chunk = JSON.parse(data) as StreamChunk;
+          } catch {
+            continue; // a malformed/partial payload; ignore it
+          }
+          const delta = chunk.choices?.[0]?.delta;
+          if (!delta) continue;
+          if (typeof delta.content === 'string' && delta.content) {
+            content += delta.content;
+            onDelta(delta.content);
+          }
+          for (const tc of delta.tool_calls ?? []) {
+            const index = tc.index ?? 0;
+            const call = (toolCalls[index] ??= { id: '', type: 'function', function: { name: '', arguments: '' } });
+            if (tc.id) call.id = tc.id;
+            if (tc.function?.name) call.function.name += tc.function.name;
+            if (tc.function?.arguments) call.function.arguments += tc.function.arguments;
+          }
         }
       }
+    } catch (error) {
+      // The per-call timeout can elapse mid-stream — shape that abort the same way
+      // as one on the initial fetch, rather than leaking the raw DOMException.
+      throw this.transportError(error, timeoutMs);
     }
 
     // The array can be sparse if providers number tool calls non-contiguously.

@@ -1,76 +1,88 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Check, RotateCcw, Sparkles, X } from 'lucide-react';
 import { api } from '../api.ts';
+import { copilotTurn } from '../copilotTurn.ts';
 import Chat from '../components/Chat.tsx';
 import ConfirmDialog from '../components/ConfirmDialog.tsx';
-import { personaVisual } from '../personaVisual.tsx';
-import type { MemoryMessage, MemoryProposal, Personality } from '../../shared/types.ts';
+import { personaVisual, PersonaMark } from '../personaVisual.tsx';
+import type { MemoryProposal, Personality, SessionSuggestion } from '../../shared/types.ts';
 
-// The Sox copilot: a warm, ChatGPT-style memory chat. Conversation builds
-// long-term career memory; "Review what I learned" extracts candidate items the
-// user confirms before anything is saved.
-export default function CopilotChat({ persona, onMemorySaved }: { persona: Personality | null; onMemorySaved?: () => void }) {
-  const [messages, setMessages] = useState<MemoryMessage[]>([]);
-  const [busy, setBusy] = useState(false);
-  // The reply currently streaming in, shown live until the saved message lands.
-  const [streaming, setStreaming] = useState('');
+// The Sox copilot: a warm, companion-style chat. The conversation is for the big
+// picture — getting to know each other, life, and strategy — and builds long-term
+// memory; "Review what I learned" extracts candidate items the user confirms
+// before anything is saved. When the talk turns to one concrete role, Sox can
+// offer (via onStartSession) to open a dedicated job-hunt workspace for it.
+export default function CopilotChat({
+  profileId,
+  persona,
+  onMemorySaved,
+  onStartSession
+}: {
+  profileId: string | null;
+  persona: Personality | null;
+  onMemorySaved?: () => void;
+  onStartSession?: (suggestion: SessionSuggestion) => void | Promise<void>;
+}) {
+  // The chat turn (messages, busy, streaming, activity, error) lives in a
+  // module-level store so an in-flight turn survives navigating away and back —
+  // see copilotTurn.ts. UI-only state stays local.
+  const turn = useSyncExternalStore(copilotTurn.subscribe, copilotTurn.getState);
+  const { messages, streaming, activity, error } = turn;
   const [proposals, setProposals] = useState<MemoryProposal[] | null>(null);
   const [picked, setPicked] = useState<Record<number, boolean>>({});
-  const [error, setError] = useState('');
   const [confirmRestart, setConfirmRestart] = useState(false);
+  // Busy for the non-turn actions (review/restart/save), kept separate from the
+  // streaming turn's own busy so neither blocks the other unexpectedly.
+  const [working, setWorking] = useState(false);
+  const busy = turn.busy || working;
 
+  // Load (or, on profile switch, reset and reload) this profile's conversation.
+  // The store ignores a re-mount that lands mid-turn, so returning to the pane
+  // keeps the live stream instead of wiping it.
   useEffect(() => {
-    api.getMemoryMessages().then(setMessages).catch((e: Error) => setError(e.message));
-  }, []);
+    if (profileId) void copilotTurn.init(profileId);
+  }, [profileId]);
 
   // The active personality (chosen in Settings → Personality) names the copilot
   // and colours its avatar + greeting mark, so the chat feels like "them".
   const personaName = persona?.name ?? 'Sox';
   const visual = personaVisual(persona);
 
-  async function send(content: string): Promise<void> {
-    setError('');
-    setMessages((prev) => [...prev, { id: `tmp-${Date.now()}`, role: 'user', content, created_at: '' }]);
-    setBusy(true);
-    setStreaming('');
-    try {
-      await api.sendMemoryMessageStream(content, persona?.id ?? 'sox', (text) =>
-        setStreaming((prev) => prev + text));
-      setMessages(await api.getMemoryMessages());
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-      setStreaming('');
-    }
+  function send(content: string): void {
+    void copilotTurn.send(content, persona?.id ?? 'sox');
+  }
+
+  // Stop the in-flight turn: aborts the request and cancels the run server-side.
+  function stop(): void {
+    copilotTurn.stop();
   }
 
   async function restart(): Promise<void> {
     setConfirmRestart(false);
-    setError('');
-    setBusy(true);
+    copilotTurn.setError('');
+    setWorking(true);
     try {
       await api.clearMemoryMessages();
-      setMessages([]);
+      copilotTurn.clear();
       setProposals(null);
     } catch (e) {
-      setError((e as Error).message);
+      copilotTurn.setError((e as Error).message);
     } finally {
-      setBusy(false);
+      setWorking(false);
     }
   }
 
   async function review(): Promise<void> {
-    setError('');
-    setBusy(true);
+    copilotTurn.setError('');
+    setWorking(true);
     try {
       const result = await api.proposeMemory();
       setProposals(result.items);
       setPicked(Object.fromEntries(result.items.map((_, i) => [i, true])));
     } catch (e) {
-      setError((e as Error).message);
+      copilotTurn.setError((e as Error).message);
     } finally {
-      setBusy(false);
+      setWorking(false);
     }
   }
 
@@ -86,13 +98,13 @@ export default function CopilotChat({ persona, onMemorySaved }: { persona: Perso
       setProposals(null);
       onMemorySaved?.();
     } catch (e) {
-      setError((e as Error).message);
+      copilotTurn.setError((e as Error).message);
     }
   }
 
   const emptyState = (
     <div className="greeting">
-      <div className="greetingMark" style={{ background: visual.gradient }}><visual.Icon size={30} /></div>
+      <PersonaMark persona={persona} size={30} className="greetingMark" />
       <h1>Hi, I'm {personaName}.</h1>
       <p className="greetingLead">
         {persona?.mission ?? "I'm your copilot for landing a great remote dev role — then growing you toward the top of the field. I'm in your corner the whole way."}
@@ -102,18 +114,20 @@ export default function CopilotChat({ persona, onMemorySaved }: { persona: Perso
 
   return (
     <div className="pane">
-      <header className="paneHeader">
-        <div className="paneTitle">
-          <span className="paneTitleMark" style={{ background: visual.gradient }}><visual.Icon size={13} /></span>
-          Chat with {personaName}
-        </div>
-        <div className="headerActions">
-          <button className="pillBtn ghost" onClick={() => setConfirmRestart(true)} disabled={busy}>
-            <RotateCcw size={15} /> Restart
-          </button>
-          <button className="pillBtn" onClick={review} disabled={busy}>
-            <Sparkles size={15} /> Review what I learned
-          </button>
+      <header className="paneHeader centered">
+        <div className="paneHeaderInner">
+          <div className="paneTitle">
+            <PersonaMark persona={persona} size={18} className="paneTitleMark" zoomable />
+            Chat with {personaName}
+          </div>
+          <div className="headerActions">
+            <button className="pillBtn ghost" onClick={() => setConfirmRestart(true)} disabled={busy}>
+              <RotateCcw size={15} /> Restart
+            </button>
+            <button className="pillBtn" onClick={review} disabled={busy}>
+              <Sparkles size={15} /> Review what I learned
+            </button>
+          </div>
         </div>
       </header>
 
@@ -122,13 +136,16 @@ export default function CopilotChat({ persona, onMemorySaved }: { persona: Perso
       <Chat
         messages={messages}
         onSend={send}
+        onStop={stop}
+        activity={activity}
         busy={busy}
         streamingText={streaming}
         assistantName={personaName}
-        assistantAvatar={<visual.Icon size={16} />}
+        assistantAvatar={<PersonaMark persona={persona} size={20} bare />}
         personaGradient={visual.gradient}
         placeholder={`Message ${personaName}…`}
         emptyState={emptyState}
+        onStartSession={onStartSession}
         disclaimer={`${personaName} only saves what you confirm. Nothing is stored until you review it.`}
       />
 

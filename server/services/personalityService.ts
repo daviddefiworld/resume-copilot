@@ -21,6 +21,7 @@ export interface PersonalityInput {
   mission?: string;
   icon?: string;
   accent?: string;
+  image?: string;
 }
 
 // Owns the set of agent personalities: the built-in fictional-AI presets plus
@@ -95,7 +96,8 @@ class PersonalityService {
       builtin: false,
       mission: String(input.mission || '').trim() || undefined,
       icon: String(input.icon || '').trim() || 'bot',
-      accent: String(input.accent || '').trim() || '#a78bfa'
+      accent: String(input.accent || '').trim() || '#a78bfa',
+      image: String(input.image || '').trim() || undefined
     };
     this.writeCustom([...this.readCustom(), personality]);
     return personality;
@@ -146,6 +148,7 @@ class PersonalityService {
     if (t(input.mission)) out.mission = t(input.mission);
     if (t(input.icon)) out.icon = t(input.icon);
     if (t(input.accent)) out.accent = t(input.accent);
+    if (t(input.image)) out.image = t(input.image);
     return out;
   }
 

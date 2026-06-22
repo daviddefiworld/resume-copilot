@@ -55,6 +55,75 @@ const PAGE_LENGTH_GUIDANCE =
   'fill space. To lengthen: add the most job-relevant evidence first. Always keep the most recent and ' +
   'most relevant experience the richest.';
 
+// Autonomy. Counters the chat's tendency to over-ask: do the work, make
+// reasonable assumptions, and reserve questions/approval for the few moments that
+// truly need the user. The one hard rule (explicit approval before any external
+// send) is never weakened. `canWriteDocuments` is true ONLY where the agent
+// actually has workspace document tools (the resume session). The copilot chat
+// has none, so it is told plainly never to claim it wrote one — otherwise, primed
+// to "just do it", it narrates document writes that never happened.
+function autonomyGuidance(canWriteDocuments: boolean): string {
+  const docLine = canWriteDocuments
+    ? '- Researching, drafting, and updating your workspace documents are yours to do freely — just do them ' +
+      'with your document tools and show the result. Never claim a document is saved unless a document tool ' +
+      'call actually succeeded this turn; if you only intend to, say "I\'ll add it to…", not "I\'ve added it to…".'
+    : '- You have NO document, file, or workspace tools in this chat. Never say you created, saved, wrote, ' +
+      'updated, logged, or drafted anything into a document or file here — you only talk, think, and use any ' +
+      'research tools you actually have. A focused job hunt with real documents lives in its own session.';
+  return [
+    'BIAS TOWARD DOING, NOT ASKING. Take the next step yourself using what you already know (saved memory,',
+    'this conversation, sensible defaults), rather than interviewing the user. Ask a question ONLY when you',
+    'genuinely cannot move forward without it — an essential fact you cannot infer, or a real fork that',
+    'changes what you would do. At most one, and only when it truly matters; otherwise act, then briefly say',
+    'what you did and what is next.',
+    docLine,
+    '- The ONE thing that always needs an explicit yes is actually sending or submitting something external',
+    '  (an email, an application, a calendar invite). Prepare it, show it, and ask once — never invent other',
+    '  approval checkpoints around it, and never re-ask what you already have an answer to.'
+  ].join('\n');
+}
+
+// Quick-pick answers. Teaches the model the ```ask block the chat turns into a
+// click-to-answer select-card (parsed by src/agentQuestions.ts). It's a fixed
+// UI contract, so it lives in code (not the editable prompts) and is appended to
+// the conversational system prompts. Kept generic: it names no domain, so it
+// works for the Copilot chat and any resume session alike.
+const ASK_OPTIONS_GUIDANCE = [
+  'QUICK-PICK ANSWERS — let them answer in one click. When your turn ends by asking the user to choose',
+  'among a small set of concrete options (a preference, which of a few candidate roles/companies/people,',
+  'a this-or-that fork, any multiple-choice), append ONE fenced block tagged `ask` right after your short',
+  'prose question. Its body is a single JSON object of this exact shape:',
+  '```ask',
+  '{"question": "<the same question, one short line>", "header": "<=2-word tag>", "multiSelect": false, "options": [{"label": "<short answer>", "description": "<=8-word hint, optional>"}]}',
+  '```',
+  'Rules: give 2-5 options, each label just a few words; set "multiSelect" to true only when several answers',
+  'can genuinely apply together; do NOT add an "Other"/"Something else" option — the card always offers a',
+  'free-text box. Use it ONLY for a genuine short-list choice, never for open-ended questions, and never more',
+  'than one block per reply, always as the very LAST thing. The block is hidden from your prose and shown as',
+  'buttons instead, so your sentence above it must still read naturally and ask the question on its own.'
+].join('\n');
+
+// Start-a-job-hunt offer. Teaches the model the ```session block the copilot chat
+// turns into a "Start job hunt" action card (parsed by src/agentQuestions.ts).
+// This chat is the companion/strategy space; the focused grind on one specific
+// role belongs in its own job-hunt session, so when the talk centers on a concrete
+// opportunity the user wants to chase, the copilot offers to open that workspace.
+// A fixed UI contract, so it lives in code; appended only to the copilot prompt.
+const SESSION_SUGGESTION_GUIDANCE = [
+  'OPENING A JOB HUNT — this companion chat is the big picture; it is NOT where you grind a single',
+  'application. The moment the talk settles on ONE specific role or company the user wants to pursue, OFFER',
+  '(one short, friendly prose line) to open a dedicated job-hunt workspace, then append ONE fenced block',
+  'tagged `session` as the very LAST thing. Its body is a single JSON object of this exact shape:',
+  '```session',
+  '{"title": "<Company — Role label>", "kickoff": "<first message in the USER\'S own voice handing the new workspace everything known: role, company, and the full job description if you have it>", "company": "<company name if known>", "role": "<job title if known>", "location": "<if known>", "jobDescription": "<the JD text if you have it>", "link": "<posting or company URL if you have one>"}',
+  '```',
+  'Rules: only "title" and "kickoff" are required; ALWAYS fill company, role, location, jobDescription, and',
+  'link too whenever you actually know them, so the new session opens with the target identified instead of',
+  're-deriving it. Never invent any of them — omit what you do not know. Offer ONLY for a concrete opportunity',
+  'the user wants to chase, at most once per reply. The block is hidden and shown as an action card, so the',
+  'sentence above it must read naturally and make the offer on its own.'
+].join('\n');
+
 const MEMORY_CATEGORIES = [
   'contact_details', 'profile_summary', 'work_experience', 'projects', 'skills', 'education',
   'certifications', 'achievements', 'career_goals', 'role_preferences',
@@ -74,7 +143,7 @@ export function memoryInterviewSystem(personality: Personality, memory: string, 
     character: character || '(this is early in your relationship — you are still getting to know them)',
     insight: INSIGHT(),
     guardrails: GUARDRAILS()
-  });
+  }) + '\n\n' + autonomyGuidance(false) + '\n\n' + ASK_OPTIONS_GUIDANCE + '\n\n' + SESSION_SUGGESTION_GUIDANCE;
 }
 
 // --- Character reflection: after a conversation grows long, fold the transcript
@@ -227,7 +296,7 @@ export function resumeChatSystem(input: {
     nextSteps: nextSteps || '(no plan yet — propose a short Next Steps plan and offer to start it)',
     step,
     memoryNudge
-  });
+  }) + '\n\n' + autonomyGuidance(true) + '\n\n' + ASK_OPTIONS_GUIDANCE;
 }
 
 // --- ATS analysis: score a resume against a job description, strictly. ---

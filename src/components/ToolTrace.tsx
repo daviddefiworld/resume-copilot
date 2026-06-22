@@ -41,6 +41,12 @@ function ToolCallRow({ entry }: { entry: ToolTraceEntry }) {
           )}
           <div className="toolLabel">Result</div>
           <pre>{entry.result || '(no output)'}</pre>
+          {entry.raw && entry.raw.trim() !== entry.result.trim() && (
+            <>
+              <div className="toolLabel">Full response</div>
+              <pre>{entry.raw}</pre>
+            </>
+          )}
         </div>
       )}
     </div>

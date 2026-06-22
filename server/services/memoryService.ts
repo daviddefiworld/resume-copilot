@@ -8,7 +8,9 @@ import { settingsService } from './settingsService.ts';
 import { profileService } from './profileService.ts';
 import { personalityService } from './personalityService.ts';
 import { characterMemoryService } from './characterMemoryService.ts';
+import { documentService } from './documentService.ts';
 import { memoryInterviewSystem, memoryExtractionPrompt } from './prompts.ts';
+import type { RunEvent } from './runRegistry.ts';
 import type { ChatMessage, ChatRole, MemoryItem, MemoryMessage, MemoryProposal, ToolTraceEntry } from '../../shared/types.ts';
 
 interface ExtractionResult {
@@ -42,6 +44,22 @@ class MemoryService {
     characterMemoryService.onConversationCleared(profileId);
   }
 
+  // Fold any un-reflected tail of the copilot conversation into the active
+  // character's memory now — invoked when the user leaves the copilot chat for a
+  // job-hunt session. Best-effort and off the critical path (like the post-turn
+  // reflection): it kicks the reflection off in the background and returns at
+  // once, so navigation never waits on a second AI round-trip. A no-op when there
+  // is no active profile, or nothing new since the last reflection.
+  flushCharacterReflection(): { ok: true } {
+    const profileId = profileService.activeId();
+    if (!profileId) return { ok: true };
+    const personality = personalityService.get(personalityService.config().personalityId);
+    void characterMemoryService
+      .flushReflection(profileId, personality, memoryRepository.listMessages(profileId))
+      .catch(() => {});
+    return { ok: true };
+  }
+
   // Append the user's message, generate the agent's reply, store and return it.
   async sendMessage(content: string, personalityId: string): Promise<MemoryMessage> {
     return this.runChat(content, personalityId, (messages) => agentRunner.run(messages));
@@ -49,9 +67,17 @@ class MemoryService {
 
   // Streaming counterpart: streams the reply's text through `onDelta` as it is
   // generated, then persists and returns the finished message exactly as
-  // sendMessage does (including the trace and the background reflection).
-  async sendMessageStream(content: string, personalityId: string, onDelta: StreamDelta): Promise<MemoryMessage> {
-    return this.runChat(content, personalityId, (messages) => agentRunner.runStream(messages, {}, onDelta));
+  // sendMessage does (including the trace and the background reflection). `onEvent`
+  // forwards the run's live "thinking"/tool status down the open SSE stream so the
+  // chat can show the agent's working process.
+  async sendMessageStream(
+    content: string,
+    personalityId: string,
+    onDelta: StreamDelta,
+    onEvent?: (event: RunEvent) => void,
+    signal?: AbortSignal
+  ): Promise<MemoryMessage> {
+    return this.runChat(content, personalityId, (messages) => agentRunner.runStream(messages, { onEvent, signal }, onDelta));
   }
 
   // The shared chat turn: build the prompt, run the agent (buffered or streamed,
@@ -94,7 +120,11 @@ class MemoryService {
       ...history
     ]);
 
-    const reply = this.append('assistant', result.content, profileId, result.trace);
+    // The copilot has no document tools, so any "I saved it to a doc" claim is
+    // necessarily false — correct it before persisting (a safety net behind the
+    // prompt, which already tells the copilot it cannot write documents here).
+    const safeContent = documentService.reconcileClaims(result.content, result.trace);
+    const reply = this.append('assistant', safeContent, profileId, result.trace);
 
     // Let the character reflect on the conversation so its memory evolves. Runs
     // only when the chat has grown enough; failures never affect the reply. Kept

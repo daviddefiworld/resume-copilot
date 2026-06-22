@@ -13,6 +13,10 @@ const REFLECT_EVERY = 6;
 // Once a recap exists, how many of the most recent messages still go to the
 // model verbatim (older context lives in the recap).
 const RECENT_WINDOW = 10;
+// On an explicit flush (the user leaving the copilot chat) the smallest
+// conversation worth folding into memory — skips a lone greeting exchange while
+// still capturing a short, real chat the regular cadence (≥SUMMARIZE_AFTER) misses.
+const FLUSH_MIN_MESSAGES = 2;
 
 interface ReflectionResult {
   summary?: string;
@@ -72,7 +76,31 @@ class CharacterMemoryService {
     const row = this.row(profileId, personality.id);
     const grownEnough = count >= SUMMARIZE_AFTER && count - row.reflected_count >= REFLECT_EVERY;
     if (!grownEnough) return;
+    await this.reflect(profileId, personality, messages, row);
+  }
 
+  // Fold any leftover tail the regular cadence hasn't captured yet into this
+  // character's memory now, however few the new messages are. Used when the user
+  // leaves the copilot chat for a job-hunt session, so a short tail (below
+  // REFLECT_EVERY, or a whole chat that never reached SUMMARIZE_AFTER) isn't lost.
+  // No-op when nothing new has arrived since the last reflection.
+  async flushReflection(profileId: string, personality: Personality, messages: MemoryMessage[]): Promise<void> {
+    const count = messages.length;
+    const row = this.row(profileId, personality.id);
+    if (count < FLUSH_MIN_MESSAGES || count <= row.reflected_count) return;
+    await this.reflect(profileId, personality, messages, row);
+  }
+
+  // The actual reflection: ask the model to fold the transcript into the
+  // character's recap + notes against what it already knew, then persist.
+  // Best-effort — any failure is swallowed so it can never break the chat.
+  // Shared by the cadence-based maybeReflect and the explicit flushReflection.
+  private async reflect(
+    profileId: string,
+    personality: Personality,
+    messages: MemoryMessage[],
+    prior: CharacterMemoryRow
+  ): Promise<void> {
     try {
       const transcript = messages
         .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
@@ -81,18 +109,18 @@ class CharacterMemoryService {
         characterReflectionPrompt({
           personality,
           transcript,
-          priorSummary: row.summary,
-          priorNotes: row.notes
+          priorSummary: prior.summary,
+          priorNotes: prior.notes
         }),
         { model: settingsService.advancedModel() }
       );
       characterMemoryRepository.upsert({
         profile_id: profileId,
         personality_id: personality.id,
-        summary: String(result.summary ?? row.summary ?? '').trim(),
-        notes: String(result.notes ?? row.notes ?? '').trim(),
-        message_count: count,
-        reflected_count: count,
+        summary: String(result.summary ?? prior.summary ?? '').trim(),
+        notes: String(result.notes ?? prior.notes ?? '').trim(),
+        message_count: messages.length,
+        reflected_count: messages.length,
         updated_at: new Date().toISOString()
       });
     } catch {

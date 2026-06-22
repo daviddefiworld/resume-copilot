@@ -11,6 +11,9 @@ router.post('/messages', asyncHandler(memoryController.sendMessage));
 // (whose timeout race would try to send JSON after headers are already flushed).
 router.post('/messages/stream', memoryController.streamMessage);
 router.delete('/messages', asyncHandler(memoryController.clearMessages));
+// Fold the un-reflected tail of the copilot chat into character memory (fired on
+// leaving the copilot chat for a job-hunt session).
+router.post('/flush-reflection', asyncHandler(memoryController.flushReflection));
 router.post('/propose', asyncHandler(memoryController.propose));
 router.get('/items', asyncHandler(memoryController.listItems));
 router.post('/items', asyncHandler(memoryController.saveItems));

@@ -6,10 +6,11 @@ type AsyncRoute = (req: Request, res: Response) => unknown | Promise<unknown>;
 // answer with an error. This is the backstop that guarantees a request can never
 // load forever: a try/catch only rescues a promise that REJECTS, so a handler
 // awaiting something that never settles (a wedged external call) would otherwise
-// hang the socket with no reply. Set above the agent's own 140s budget and the
-// 90s per-call AI timeout, so a genuine slow-but-valid turn finishes on its own
-// and this only fires for a true stall.
-const REQUEST_TIMEOUT_MS = 150_000;
+// hang the socket with no reply. Set above the slowest legitimate buffered route —
+// a resume draft (a ~140s single-shot generation, sometimes preceded by job
+// analysis) — so a genuine slow-but-valid call finishes and this only fires for a
+// true stall. (The streaming chat route owns its own response and isn't wrapped.)
+const REQUEST_TIMEOUT_MS = 200_000;
 const TIMEOUT_MESSAGE = 'The request timed out while processing. Please try again.';
 
 // Wraps a controller method so thrown errors — and stalls — become clean JSON

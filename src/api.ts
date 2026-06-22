@@ -59,10 +59,12 @@ const RETRY_STATUSES = new Set([502, 503, 504]);
 const MAX_ATTEMPTS = 3;
 
 // Per-attempt time budget. Mutating/agent routes (POST/PATCH/etc.) can legitimately
-// run for a while — the server caps a chat turn at ~150s — so they get a ceiling
-// just above that; plain reads should be near-instant. Without this the fetch has
-// no deadline, so a stalled server would leave the UI loading forever.
-const MUTATION_TIMEOUT_MS = 160_000;
+// run for a while — a resume draft is a ~140s generation and the server caps a
+// request at 200s — so this sits just above the server's own cap, letting the
+// server answer with its clear error first instead of the client timing out with a
+// generic one. Plain reads should be near-instant. Without this the fetch has no
+// deadline, so a stalled server would leave the UI loading forever.
+const MUTATION_TIMEOUT_MS = 210_000;
 const READ_TIMEOUT_MS = 20_000;
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -133,17 +135,21 @@ async function streamRequest<T>(
   path: string,
   body: unknown,
   onDelta: (text: string) => void,
-  handlers: StreamHandlers = {}
+  handlers: StreamHandlers = {},
+  signal?: AbortSignal
 ): Promise<T> {
+  // The fetch aborts on either the per-request timeout OR the caller's stop signal.
+  const composite = signal ? AbortSignal.any([AbortSignal.timeout(MUTATION_TIMEOUT_MS), signal]) : AbortSignal.timeout(MUTATION_TIMEOUT_MS);
   let response: Response;
   try {
     response = await fetch(`${BASE}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(MUTATION_TIMEOUT_MS)
+      signal: composite
     });
   } catch (error) {
+    if (signal?.aborted) throw stopError(); // user pressed Stop before the stream opened
     const name = (error as Error)?.name;
     if (name === 'TimeoutError' || name === 'AbortError') {
       throw new Error('The server took too long to respond. Please try again.');
@@ -163,35 +169,52 @@ async function streamRequest<T>(
   let buffer = '';
   let final: T | undefined;
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    // SSE events are separated by a blank line; each carries one `data:` payload.
-    let boundary: number;
-    while ((boundary = buffer.indexOf('\n\n')) !== -1) {
-      const dataLine = buffer.slice(0, boundary).split('\n').find((l) => l.startsWith('data:'));
-      buffer = buffer.slice(boundary + 2);
-      if (!dataLine) continue;
-      let event: { type: string; text?: string; message?: T; error?: string; body?: string; step?: number; tool?: string; deferred?: boolean };
-      try {
-        event = JSON.parse(dataLine.slice(5).trim());
-      } catch {
-        continue;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // SSE events are separated by a blank line; each carries one `data:` payload.
+      let boundary: number;
+      while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+        const dataLine = buffer.slice(0, boundary).split('\n').find((l) => l.startsWith('data:'));
+        buffer = buffer.slice(boundary + 2);
+        if (!dataLine) continue;
+        let event: { type: string; text?: string; message?: T; error?: string; body?: string; step?: number; tool?: string; deferred?: boolean };
+        try {
+          event = JSON.parse(dataLine.slice(5).trim());
+        } catch {
+          continue;
+        }
+        if (event.type === 'delta' && event.text) onDelta(event.text);
+        else if (event.type === 'plan') handlers.onPlan?.(event.body ?? '');
+        else if (event.type === 'status') handlers.onStatus?.({ step: event.step ?? 0, tool: event.tool });
+        else if (event.type === 'steer_ack') handlers.onSteerAck?.(event.text ?? '', event.deferred);
+        else if (event.type === 'done') final = event.message;
+        else if (event.type === 'error') throw new Error(event.error || 'The response failed.');
       }
-      if (event.type === 'delta' && event.text) onDelta(event.text);
-      else if (event.type === 'plan') handlers.onPlan?.(event.body ?? '');
-      else if (event.type === 'status') handlers.onStatus?.({ step: event.step ?? 0, tool: event.tool });
-      else if (event.type === 'steer_ack') handlers.onSteerAck?.(event.text ?? '', event.deferred);
-      else if (event.type === 'done') final = event.message;
-      else if (event.type === 'error') throw new Error(event.error || 'The response failed.');
     }
+  } catch (error) {
+    // User pressed Stop mid-stream: surface a swallow-able marker, not an error.
+    if (signal?.aborted) throw stopError();
+    throw error;
   }
 
   if (final === undefined) {
+    if (signal?.aborted) throw stopError();
     throw new Error('The response ended unexpectedly. Please try again.');
   }
   return final;
+}
+
+// A stop is a user action, not a failure — callers swallow it (clear the busy
+// state and resync) rather than showing an error. isStopped() identifies it.
+function stopError(): Error {
+  return Object.assign(new Error('Generation stopped.'), { stopped: true });
+}
+
+export function isStopped(error: unknown): boolean {
+  return Boolean((error as { stopped?: boolean } | null)?.stopped);
 }
 
 export interface MemoryItemFields {
@@ -245,10 +268,20 @@ export const api = {
   getMemoryMessages: () => request<MemoryMessage[]>('/memory/messages'),
   sendMemoryMessage: (content: string, personalityId: string) =>
     request<MemoryMessage>('/memory/messages', { method: 'POST', body: { content, personalityId } }),
-  // Streaming send: `onDelta` receives the reply text as it is generated.
-  sendMemoryMessageStream: (content: string, personalityId: string, onDelta: (text: string) => void) =>
-    streamRequest<MemoryMessage>('/memory/messages/stream', { content, personalityId }, onDelta),
+  // Streaming send: `onDelta` receives the reply text as it is generated, and
+  // `handlers.onStatus` receives the agent's live "thinking"/tool status so the
+  // chat can show its working process.
+  sendMemoryMessageStream: (
+    content: string,
+    personalityId: string,
+    onDelta: (text: string) => void,
+    handlers: StreamHandlers = {},
+    signal?: AbortSignal
+  ) => streamRequest<MemoryMessage>('/memory/messages/stream', { content, personalityId }, onDelta, handlers, signal),
   clearMemoryMessages: () => request<{ ok: true }>('/memory/messages', { method: 'DELETE' }),
+  // Fold any un-reflected tail of the copilot chat into the character's memory.
+  // Fired when leaving the copilot chat for a job-hunt session.
+  flushCharacterReflection: () => request<{ ok: true }>('/memory/flush-reflection', { method: 'POST' }),
   proposeMemory: () => request<{ items: MemoryProposal[] }>('/memory/propose', { method: 'POST' }),
   getMemoryItems: () => request<MemoryItem[]>('/memory/items'),
   saveMemoryItems: (items: MemoryProposal[]) =>
@@ -277,8 +310,9 @@ export const api = {
     content: string,
     onDelta: (text: string) => void,
     approvedCalls: string[] = [],
-    handlers: StreamHandlers = {}
-  ) => streamRequest<ResumeMessage>(`/sessions/${id}/messages/stream`, { content, approvedCalls }, onDelta, handlers),
+    handlers: StreamHandlers = {},
+    signal?: AbortSignal
+  ) => streamRequest<ResumeMessage>(`/sessions/${id}/messages/stream`, { content, approvedCalls }, onDelta, handlers, signal),
   // Steer the in-flight run for a session: queue a message the agent folds in at
   // its next step. 409 when no run is active (the caller sends a normal turn instead).
   steerSession: (id: string, content: string) =>

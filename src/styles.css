@@ -158,9 +158,16 @@ button.ghost.danger:hover { color: var(--danger); }
   padding: 12px 18px; min-height: 56px;
   border-bottom: 1px solid var(--border-soft);
 }
-.paneTitle { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+/* Chat-style headers center their content in the same 768px column as the thread,
+   so the title/actions line up with the messages instead of spanning the full pane. */
+.paneHeader.centered { padding-left: 0; padding-right: 0; }
+.paneHeaderInner {
+  width: 100%; max-width: 768px; margin: 0 auto; padding: 0 20px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0;
+}
+.paneTitle { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; min-width: 0; }
 .paneTitleMark {
-  width: 24px; height: 24px; border-radius: 7px; flex-shrink: 0;
+  width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
   display: grid; place-items: center; color: #1a1206;
   background: linear-gradient(150deg, #f5a35e, var(--accent));
 }
@@ -169,6 +176,7 @@ button.ghost.danger:hover { color: var(--danger); }
   max-width: min(420px, 70vw); padding: 4px 7px; border-radius: 7px;
   background: var(--elevated); font-weight: 600; font-size: 15px;
 }
+.sessionHeadRow { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .sessionHead { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .paneSub { color: var(--faint); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flip { transform: rotate(180deg); }
@@ -188,7 +196,7 @@ button.ghost.danger:hover { color: var(--danger); }
   max-width: 80%; white-space: pre-wrap;
 }
 .turn.assistant .avatar {
-  width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0; margin-top: 2px;
+  width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0; margin-top: 2px;
   display: grid; place-items: center; color: #1a1206;
   background: linear-gradient(150deg, #f5a35e, var(--accent));
 }
@@ -201,6 +209,138 @@ button.ghost.danger:hover { color: var(--danger); }
 .typing span:nth-child(2) { animation-delay: 0.2s; }
 .typing span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+
+/* Live "working process": the agent's thinking + tool steps for the in-flight
+   turn, shown in the pending bubble alongside the streaming reply. */
+.working { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
+/* When the reply streams in beneath the working list, separate the two so the
+   steps read as a header above the prose rather than crowding it. */
+.working:not(:last-child) { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.workStep { display: flex; align-items: center; gap: 9px; font-size: 13.5px; line-height: 1.4; }
+.workStep.done { color: var(--faint); }
+.workStep.active { color: var(--text); }
+.workIcon { display: grid; place-items: center; width: 16px; height: 16px; flex-shrink: 0; }
+.workStep.done .workIcon { color: var(--ok); }
+.workStep.active .workIcon { color: var(--accent); }
+.workSpin { animation: workspin 0.9s linear infinite; }
+@keyframes workspin { to { transform: rotate(360deg); } }
+.workLabel { overflow-wrap: anywhere; }
+
+/* ---------- Quick-pick question card ----------
+   The agent's "choose an answer" prompt: an inline select-card under the reply.
+   Live = the awaiting-answer picker; resolved = a frozen recap of what was picked. */
+.askCard {
+  margin-top: 12px; border: 1px solid var(--border); border-radius: 13px;
+  background: var(--sidebar); padding: 13px 14px;
+  animation: askIn 0.18s ease both;
+  /* Ease the accent ring out when the card flips live -> resolved on answer. */
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+@keyframes askIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.askCard.live { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent); }
+
+.askHead { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 11px; }
+.askChip {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 999px; padding: 1px 7px; flex-shrink: 0;
+}
+.askQuestion { font-size: 14.5px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+
+.askOptions { display: flex; flex-direction: column; gap: 7px; }
+.askOption {
+  display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--main); color: var(--text);
+  transition: border-color 0.13s ease, background 0.13s ease, transform 0.08s ease, opacity 0.18s ease;
+}
+.askOption:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: var(--elevated); }
+.askOption:active:not(:disabled) { transform: translateY(1px); }
+.askOption.on { border-color: var(--accent); background: rgba(232, 131, 58, 0.1); }
+.askOption:disabled { cursor: default; }
+/* Read-only recap: keep the chosen answer at full strength (overriding the global
+   button:disabled dimming) and gently mute only the options that weren't picked. */
+.askOption.on:disabled { opacity: 1; }
+.askOption:disabled:not(.on) { opacity: 0.55; }
+
+.askMark {
+  flex-shrink: 0; width: 18px; height: 18px; margin-top: 1px;
+  display: grid; place-items: center; color: #1a1206;
+  border: 1.5px solid var(--faint); transition: background 0.13s ease, border-color 0.13s ease;
+}
+.askMark.radio { border-radius: 50%; }
+.askMark.box { border-radius: 6px; }
+.askOption.on .askMark { background: var(--accent); border-color: var(--accent); }
+
+.askOptionText { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.askOptionLabel { font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+.askOptionDesc { font-size: 12.5px; color: var(--faint); line-height: 1.4; overflow-wrap: anywhere; }
+
+.askFooter { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 11px; }
+.askOtherToggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 999px; font-size: 13px;
+  border: 1px solid var(--border); color: var(--muted); background: transparent;
+}
+.askOtherToggle:hover { background: var(--elevated); color: var(--text); }
+.askOther {
+  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 200px;
+  background: var(--elevated); border: 1px solid var(--border); border-radius: 11px; padding: 4px 4px 4px 12px;
+  transition: border-color 0.13s ease, box-shadow 0.13s ease;
+}
+.askOther:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); box-shadow: 0 0 0 3px rgba(232, 131, 58, 0.13); }
+.askOtherInput { border: none; background: transparent; padding: 5px 0; border-radius: 0; }
+.askOtherInput:focus { outline: none; border: none; }
+.askSend {
+  flex-shrink: 0; width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center;
+  background: var(--accent); color: #1a1206;
+}
+.askSend:hover:not(:disabled) { background: var(--accent-hover); }
+.askSendMulti {
+  margin-left: auto; padding: 7px 16px; border-radius: 999px; font-weight: 600; font-size: 13px;
+  background: var(--accent); color: #1a1206;
+}
+.askSendMulti:hover:not(:disabled) { background: var(--accent-hover); }
+/* Keyboard focus ring for every interactive control on the card. The 2px offset
+   leaves a gap of card background even around the accent-filled Send buttons, so
+   the accent ring stays visible against them. */
+.askOption:focus-visible,
+.askOtherToggle:focus-visible,
+.askSend:focus-visible,
+.askSendMulti:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
+/* ---------- Start-a-job-hunt card ----------
+   The companion's "open a workspace for this role" offer, rendered from a
+   ```session block. An accented call-to-action under the reply, distinct from the
+   neutral quick-pick card so a real action reads as a real action. */
+.sessionCard {
+  display: flex; align-items: center; gap: 13px; margin-top: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 13px; padding: 13px 14px;
+  background: linear-gradient(135deg, rgba(232, 131, 58, 0.1), var(--sidebar));
+  animation: askIn 0.18s ease both;
+}
+.sessionCardIcon {
+  flex-shrink: 0; width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
+  color: #1a1206; background: linear-gradient(150deg, #f5a35e, var(--accent));
+}
+.sessionCardBody { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.sessionCardTitle { font-size: 14.5px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.sessionCardNote { font-size: 12.5px; color: var(--muted); line-height: 1.4; overflow-wrap: anywhere; }
+.sessionCardBtn {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px;
+  padding: 9px 15px; border-radius: 999px; font-weight: 600; font-size: 13px;
+  background: var(--accent); color: #1a1206;
+}
+.sessionCardBtn:hover:not(:disabled) { background: var(--accent-hover); }
+.sessionCardBtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Stack the button under the text on narrow panes so it never crushes the title. */
+@media (max-width: 560px) {
+  .sessionCard { flex-wrap: wrap; }
+  .sessionCardBtn { margin-left: 47px; }
+}
 
 /* empty / greeting — ChatGPT-style: greeting + composer centered together */
 .chatEmpty { flex: 1; display: grid; place-items: center; padding: 20px; overflow-y: auto; }
@@ -265,6 +405,10 @@ button.ghost.danger:hover { color: var(--danger); }
 .sendBtn:hover:not(:disabled) { background: var(--accent-hover); }
 .sendBtn:active:not(:disabled) { transform: scale(0.92); }
 .sendBtn:disabled { background: #3a3a3a; color: #7a7a7a; }
+/* Stop button: same footprint as send, but a neutral surface so halting reads as
+   distinct from sending. */
+.sendBtn.stop { background: var(--elevated); color: var(--text); border: 1px solid var(--border); }
+.sendBtn.stop:hover:not(:disabled) { background: #3a3a3a; }
 .composerNote { text-align: center; font-size: 11.5px; color: var(--faint); margin: 8px 0 0; }
 
 /* ---------- Home ---------- */
@@ -644,98 +788,105 @@ button.ghost.danger:hover { color: var(--danger); }
 .profileCreate input { flex: 1; }
 .profileCreate .pillBtn { flex-shrink: 0; white-space: nowrap; }
 
-/* ---------- Personality picker (Settings → Personality) ---------- */
-.personaGrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-.personaCard {
-  position: relative; display: flex; flex-direction: column; gap: 6px; padding: 14px;
-  background: var(--sidebar); border: 1px solid var(--border); border-radius: 12px;
-  cursor: pointer; transition: border-color 0.12s, background 0.12s;
+/* ---------- Personality (Settings → Personality) ---------- */
+.personaPane { max-width: 900px; margin: 22px auto; padding: 0 20px 44px; container-type: inline-size; }
+.personaPane > .hint { margin: 0 0 18px; line-height: 1.55; max-width: 660px; }
+.personaLayout { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 24px; align-items: start; }
+
+/* Left: a clean single-column list of selectable personalities */
+.personaList { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.personaRow {
+  display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+  padding: 9px 11px; border-radius: 12px; border: 1px solid transparent; background: transparent;
+  transition: background 0.12s ease, border-color 0.12s ease;
 }
-.personaCard:hover { border-color: var(--accent); background: rgba(232, 131, 58, 0.04); }
-.personaCard:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.personaCard.active { border-color: var(--accent); background: rgba(232, 131, 58, 0.08); }
-.personaTop { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
-.personaTop strong { font-size: 15px; }
-.personaTop .tag { display: inline-flex; align-items: center; gap: 3px; }
+.personaRow:hover { background: var(--elevated); }
+.personaRow.selected { background: var(--elevated); border-color: var(--border); }
+.personaRow.active { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.personaRow.active.selected { background: rgba(232, 131, 58, 0.09); border-color: var(--accent); }
+.personaRowMain { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.personaRowName { font-size: 14.5px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.personaRowFlag { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; color: var(--accent); white-space: nowrap; }
+.personaRowChevron { color: var(--faint); flex-shrink: 0; opacity: 0; transition: opacity 0.12s ease; }
+.personaRow:hover .personaRowChevron, .personaRow.selected .personaRowChevron { opacity: 1; }
+.personaListAdd {
+  display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%;
+  margin-top: 8px; padding: 10px; border-radius: 12px; font-size: 13.5px; font-weight: 500;
+  color: var(--muted); background: transparent; border: 1px dashed var(--border);
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.personaListAdd:hover:not(:disabled) { color: var(--text); border-color: var(--accent); background: rgba(232, 131, 58, 0.05); }
+
 .personaMark {
-  width: 30px; height: 30px; border-radius: 9px; flex-shrink: 0;
+  width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0;
   display: grid; place-items: center; color: #1a1206;
   background: linear-gradient(150deg, #f5a35e, var(--accent));
 }
-.personaMark.lg { width: 46px; height: 46px; border-radius: 13px; }
-.personaFrom { color: var(--faint); font-size: 11.5px; letter-spacing: 0.02em; }
-.personaCard p { margin: 2px 0 4px; color: var(--muted); font-size: 13px; line-height: 1.5; }
-.personaMission {
-  margin: 0 0 4px !important; color: var(--accent) !important; font-size: 12.5px !important;
-  font-style: italic; line-height: 1.5 !important;
-}
-.personaDials { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--faint); }
-.personaDials b { color: var(--muted); font-weight: 600; }
-.personaActions { position: absolute; top: 10px; right: 10px; }
-.personaAddBtn { margin: 16px auto 0; }
+.personaMark.lg { width: 48px; height: 48px; border-radius: 14px; }
+.personaFrom { color: var(--faint); font-size: 11.5px; letter-spacing: 0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Settings → Personality: a wider browse pane — grid of cards + a detail panel. */
-.personaPane { max-width: 940px; margin: 24px auto; padding: 0 20px; }
-.personaPane > .hint { margin: 0 0 16px; line-height: 1.55; }
-.personaLayout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 22px; align-items: start; }
-.personaCol { min-width: 0; }
-.personaCol .personaAddBtn { margin: 14px 0 0; }
-.personaCard p { margin: 2px 0 0; }
-.personaCard.selected { border-color: var(--accent); background: rgba(232, 131, 58, 0.06); box-shadow: 0 0 0 1px var(--accent) inset; }
-
+/* Right: the selected personality's detail */
 .personaDetail {
-  position: sticky; top: 12px; display: flex; flex-direction: column; gap: 13px;
-  background: var(--sidebar); border: 1px solid var(--border); border-radius: 14px; padding: 18px;
+  position: sticky; top: 12px; display: flex; flex-direction: column; gap: 15px;
+  background: var(--sidebar); border: 1px solid var(--border); border-radius: 16px; padding: 20px;
 }
-.personaDetailHead { display: flex; align-items: flex-start; gap: 12px; }
+.personaDetailHead { display: flex; align-items: center; gap: 13px; }
 .personaDetailName { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.personaDetailName > strong { font-size: 17px; }
-.personaDetailTags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; }
+.personaDetailName > strong { font-size: 18px; }
+.personaDetailTags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .personaDetailTags .tag { display: inline-flex; align-items: center; gap: 3px; }
-.personaDetailDesc { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
-.personaDetail .personaMission { margin: 0 !important; }
-.personaDetailDials { display: flex; flex-direction: column; gap: 9px; padding: 12px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-.personaDetailDials > div { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
-.personaDetailDials b { color: var(--faint); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
-.personaDetailDials span { color: var(--text); line-height: 1.45; }
 .personaDetailActions { display: flex; flex-wrap: wrap; gap: 8px; }
-.personaDetailActions .pillBtn { flex: 1; min-width: 120px; justify-content: center; }
-.personaDetailActions .pillBtn.danger { color: #fca5a5; }
+.personaDetailActions .pillBtn { flex: 1; min-width: 130px; justify-content: center; }
+.personaDetailActions .pillBtn.danger { flex: 0 0 auto; min-width: 0; padding: 8px 12px; color: #fca5a5; }
 .personaDetailActions .pillBtn.danger:hover:not(:disabled) { border-color: rgba(239, 68, 68, 0.4); }
+.personaDetailDesc { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+.personaMission { margin: 0; color: var(--accent); font-size: 13px; font-style: italic; line-height: 1.55; }
 
-.characterMemory.inPanel { margin: 0; padding: 14px 0 0; border: none; border-top: 1px solid var(--border); border-radius: 0; background: transparent; }
-.personaBuiltinNote { margin: 0 0 4px; padding: 10px 12px; border-radius: 9px; background: var(--elevated); border: 1px solid var(--border); line-height: 1.5; }
+.personaTraits { display: grid; gap: 12px; padding: 15px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.personaTraits > div { display: flex; flex-direction: column; gap: 3px; }
+.traitLabel { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); font-weight: 600; }
+.traitValue { font-size: 13px; color: var(--text); line-height: 1.45; }
 
-@media (max-width: 860px) {
-  .personaLayout { grid-template-columns: 1fr; }
-  .personaDetail { position: static; }
-}
-
-/* What the active character remembers about the user (read-only, evolves) */
-.characterMemory {
-  margin: 18px 0 0; padding: 16px; border: 1px solid var(--border); border-radius: 12px;
-  background: var(--sidebar);
-}
-.characterMemoryHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.characterMemoryHead h3 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 14px; }
-.characterMemory .hint { margin: 8px 0 12px; font-size: 12.5px; line-height: 1.5; }
+/* What the selected character remembers about the user (read-only, evolves) */
+.characterMemory { display: flex; flex-direction: column; }
+.characterMemoryHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.characterMemoryHead h3 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 13.5px; font-weight: 600; color: var(--muted); }
 .characterNotes {
   margin: 0; padding: 12px 14px; border-radius: 10px; background: var(--elevated);
   border: 1px solid var(--border); color: var(--text); font-size: 13px; line-height: 1.6;
   white-space: pre-wrap; word-break: break-word; font-family: inherit;
 }
-.characterNotesEmpty { margin: 0; color: var(--faint); font-size: 13px; font-style: italic; }
-.characterMemoryMeta { display: block; margin-top: 10px; color: var(--faint); font-size: 11.5px; }
-.personaForm { max-width: none; margin: 20px 0 0; padding: 18px 0 0; border-top: 1px solid var(--border); }
-.personaForm h3 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 14px; }
+.characterNotesEmpty { margin: 0; color: var(--faint); font-size: 12.5px; font-style: italic; line-height: 1.55; }
+.characterMemoryMeta { display: block; margin-top: 10px; color: var(--faint); font-size: 11px; }
+
+/* Collapse to one column when the pane itself (not the window) gets narrow —
+   the settings nav eats width, so a viewport query would mis-fire. */
+@container (max-width: 600px) {
+  .personaLayout { grid-template-columns: 1fr; }
+  .personaDetail { position: static; }
+}
+
+/* Create / edit form */
+.personaForm { max-width: 560px; margin: 4px auto 0; padding: 0; border-top: none; }
+.personaFormHead { display: flex; align-items: center; gap: 12px; }
+.personaFormBack { color: var(--muted); }
+.personaForm h3 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 15px; }
 .personaForm select { padding: 8px 9px; }
-.personaFormActions { display: flex; justify-content: flex-end; gap: 10px; }
+.personaFormSection {
+  margin-top: 8px; padding-top: 16px; border-top: 1px solid var(--border);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); font-weight: 600;
+}
+.personaFormActions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
+.personaBuiltinNote { margin: 0; padding: 10px 12px; border-radius: 9px; background: var(--elevated); border: 1px solid var(--border); line-height: 1.5; }
 
 /* Live preview + icon/colour pickers in the create form */
-.personaPreviewRow { display: flex; align-items: center; gap: 14px; padding: 4px 0 2px; }
-.personaPreviewRow > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.personaPreviewRow {
+  display: flex; align-items: center; gap: 14px; padding: 14px; border-radius: 12px;
+  background: var(--elevated); border: 1px solid var(--border);
+}
+.personaPreviewRow > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .personaPreviewRow strong { font-size: 15px; }
-.personaPreviewRow small { color: var(--faint); font-size: 12px; }
+.personaPreviewRow small { color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .iconPicker { display: flex; flex-wrap: wrap; gap: 7px; }
 .iconSwatch {
   width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
@@ -752,7 +903,7 @@ button.ghost.danger:hover { color: var(--danger); }
 }
 .colorSwatch:hover { transform: scale(1.1); }
 .colorSwatch.on { border-color: var(--text); }
-@media (max-width: 620px) { .personaGrid { grid-template-columns: 1fr; } }
+@media (max-width: 620px) { .personaForm { max-width: none; } }
 
 /* ---------- MCP tools (Settings → Tools) ---------- */
 .mcpSettings { max-width: 760px; margin: 0 auto; padding: 22px 20px 60px; }
@@ -836,6 +987,24 @@ button.ghost.danger:hover { color: var(--danger); }
 .homeCard svg { transition: transform 0.16s ease; }
 .homeCard:hover svg { transform: scale(1.08); }
 .brandMark, .greetingMark, .avatar, .personaMark, .paneTitleMark { transition: background 0.2s ease; }
+
+/* Persona avatar images: fill the rounded mark and clip to its radius. The mark
+   keeps its accent gradient behind, so a transparent character cutout still
+   reads; an opaque photo simply covers it. */
+.personaImg { width: 100%; height: 100%; object-fit: cover; display: block; }
+.avatar,
+.personaMark.hasImage, .brandMark.hasImage, .greetingMark.hasImage, .paneTitleMark.hasImage { overflow: hidden; }
+
+/* Click a persona image to open it larger in a lightbox modal. */
+.pfpZoom { cursor: zoom-in; }
+.pfpModalBackdrop {
+  position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center;
+  padding: 28px; background: rgba(0, 0, 0, 0.74); cursor: zoom-out;
+}
+.pfpModalImg {
+  max-width: min(440px, 88vw); max-height: 86vh; border-radius: 22px; cursor: default;
+  background: var(--elevated); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+}
 
 /* Messages ease in so the thread feels alive rather than snapping. */
 .turn { animation: riseIn 0.26s ease both; }

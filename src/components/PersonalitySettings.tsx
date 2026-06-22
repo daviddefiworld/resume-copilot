@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent, ReactElement } from 'react';
-import { Brain, Check, Pencil, Plus, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
+import { Brain, Check, ChevronLeft, ChevronRight, Pencil, Plus, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
 import { api } from '../api.ts';
 import type { CharacterMemoryView, Personality } from '../../shared/types.ts';
-import { PERSONA_ACCENTS, PERSONA_ICON_KEYS, PERSONA_ICONS, personaVisual } from '../personaVisual.tsx';
+import { PERSONA_ACCENTS, PERSONA_ICON_KEYS, PERSONA_ICONS, PersonaMark } from '../personaVisual.tsx';
 import ConfirmDialog from './ConfirmDialog.tsx';
 
-// Settings → Personality. Browse the fictional-AI copilots on the left; the
-// selected one opens in a detail panel on the right with its traits and what it
-// remembers about you. Any personality — built-in (like Sox) or your own — can
-// be edited; built-ins keep a "Reset to default" so edits are never permanent.
+// Settings → Personality. A clean master–detail: a single-column list of the
+// copilots on the left, the selected one's detail (traits + what it remembers)
+// on the right. Any personality — built-in (like Sox) or your own — can be
+// edited; built-ins keep a "Reset to default" so edits are never permanent.
 // Personality changes the copilot's voice and style only — the honesty
 // guardrails are universal, so a custom personality can never be made to
 // fabricate or manipulate.
@@ -26,7 +26,8 @@ const BLANK = {
   resumeBias: '',
   mission: '',
   icon: 'bot',
-  accent: PERSONA_ACCENTS[4]
+  accent: PERSONA_ACCENTS[4],
+  image: ''
 };
 
 type PersonaForm = typeof BLANK;
@@ -42,7 +43,8 @@ function toForm(p: Personality): PersonaForm {
     resumeBias: p.resumeBias ?? '',
     mission: p.mission ?? '',
     icon: p.icon ?? 'bot',
-    accent: p.accent ?? PERSONA_ACCENTS[4]
+    accent: p.accent ?? PERSONA_ACCENTS[4],
+    image: p.image ?? ''
   };
 }
 
@@ -174,56 +176,51 @@ export default function PersonalitySettings({ personas, activeId, onChanged }: P
 
   return (
     <div className="personaPane">
-      <p className="hint">
-        Your copilot can take on the personality of a great fictional AI — or one you invent. This
-        changes how it talks and pushes you, never the facts: every personality follows the same
-        honesty rules.
-      </p>
-
-      {error && <p className="error">{error}</p>}
-
       {editing ? (
         renderForm()
       ) : (
-        <div className="personaLayout">
-          <div className="personaCol">
-            <div className="personaGrid">
+        <>
+          <p className="hint">
+            Your copilot can take on the voice of a great fictional AI — or one you create. This shapes
+            how it talks and pushes you, never the facts: every personality follows the same honesty rules.
+          </p>
+
+          {error && <p className="error">{error}</p>}
+
+          <div className="personaLayout">
+            <div className="personaList">
               {personas.map((p) => {
-                const visual = personaVisual(p);
+                const isActive = p.id === activeId;
+                const isSel = p.id === selected?.id;
                 return (
-                  <div
+                  <button
                     key={p.id}
-                    className={`personaCard ${p.id === selected?.id ? 'selected' : ''} ${p.id === activeId ? 'active' : ''}`}
-                    role="button"
-                    tabIndex={0}
+                    type="button"
+                    className={`personaRow ${isSel ? 'selected' : ''} ${isActive ? 'active' : ''}`}
                     onClick={() => view(p.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        view(p.id);
-                      }
-                    }}
                   >
-                    <div className="personaTop">
-                      <span className="personaMark" style={{ background: visual.gradient }}><visual.Icon size={17} /></span>
-                      <strong>{p.name}</strong>
-                      {p.id === activeId && <span className="tag confirmed"><Check size={11} /> Active</span>}
-                      {!p.builtin && <span className="tag new">Custom</span>}
-                    </div>
-                    {p.inspiration && <small className="personaFrom">{p.inspiration}</small>}
-                    <p>{p.description}</p>
-                  </div>
+                    <PersonaMark persona={p} size={17} />
+                    <span className="personaRowMain">
+                      <span className="personaRowName">{p.name}</span>
+                      {p.inspiration && <small className="personaFrom">{p.inspiration}</small>}
+                    </span>
+                    {isActive ? (
+                      <span className="personaRowFlag"><Check size={12} /> Active</span>
+                    ) : (
+                      <ChevronRight className="personaRowChevron" size={16} />
+                    )}
+                  </button>
                 );
               })}
+
+              <button type="button" className="personaListAdd" onClick={startCreate} disabled={busy}>
+                <Plus size={15} /> Create a personality
+              </button>
             </div>
 
-            <button className="pillBtn ghost personaAddBtn" onClick={startCreate} disabled={busy}>
-              <Plus size={15} /> Create a personality
-            </button>
+            {selected && renderDetail(selected)}
           </div>
-
-          {selected && renderDetail(selected)}
-        </div>
+        </>
       )}
 
       {pendingDelete && (
@@ -252,12 +249,11 @@ export default function PersonalitySettings({ personas, activeId, onChanged }: P
 
   // ---- The right-hand detail panel: traits + this character's memory ----
   function renderDetail(p: Personality): ReactElement {
-    const visual = personaVisual(p);
     const isActive = p.id === activeId;
     return (
       <aside className="personaDetail">
         <div className="personaDetailHead">
-          <span className="personaMark lg" style={{ background: visual.gradient }}><visual.Icon size={22} /></span>
+          <PersonaMark persona={p} size={23} className="personaMark lg" />
           <div className="personaDetailName">
             <strong>{p.name}</strong>
             {p.inspiration && <small className="personaFrom">{p.inspiration}</small>}
@@ -266,16 +262,6 @@ export default function PersonalitySettings({ personas, activeId, onChanged }: P
               <span className={`tag ${p.builtin ? '' : 'new'}`}>{p.builtin ? 'Built-in' : 'Custom'}</span>
             </div>
           </div>
-        </div>
-
-        <p className="personaDetailDesc">{p.description}</p>
-        {p.mission && <p className="personaMission">“{p.mission}”</p>}
-
-        <div className="personaDetailDials">
-          <div><b>Tone</b><span>{p.tone}</span></div>
-          <div><b>Critique</b><span>{p.critiqueIntensity}</span></div>
-          {p.reasoningStyle && <div><b>Reasoning</b><span>{p.reasoningStyle}</span></div>}
-          {p.resumeBias && <div><b>Resume bias</b><span>{p.resumeBias}</span></div>}
         </div>
 
         <div className="personaDetailActions">
@@ -288,35 +274,40 @@ export default function PersonalitySettings({ personas, activeId, onChanged }: P
             <Pencil size={15} /> Edit
           </button>
           {!p.builtin && (
-            <button className="pillBtn ghost danger" disabled={busy} onClick={() => setPendingDelete(p)}>
-              <Trash2 size={15} /> Delete
+            <button className="pillBtn ghost danger" disabled={busy} onClick={() => setPendingDelete(p)} aria-label="Delete">
+              <Trash2 size={15} />
             </button>
           )}
         </div>
 
-        <div className="characterMemory inPanel">
+        <p className="personaDetailDesc">{p.description}</p>
+        {p.mission && <p className="personaMission">“{p.mission}”</p>}
+
+        <div className="personaTraits">
+          <div><span className="traitLabel">Tone</span><span className="traitValue">{p.tone || '—'}</span></div>
+          <div><span className="traitLabel">Critique</span><span className="traitValue">{p.critiqueIntensity || '—'}</span></div>
+          {p.reasoningStyle && <div><span className="traitLabel">Reasoning</span><span className="traitValue">{p.reasoningStyle}</span></div>}
+          {p.resumeBias && <div><span className="traitLabel">Resume bias</span><span className="traitValue">{p.resumeBias}</span></div>}
+        </div>
+
+        <div className="characterMemory">
           <div className="characterMemoryHead">
-            <h3><Brain size={16} /> What {p.name} remembers about you</h3>
+            <h3><Brain size={15} /> What {p.name} remembers</h3>
             {memory?.notes?.trim() && (
               <button className="ghost danger" disabled={busy} onClick={() => setPendingForget(true)}>
-                <Trash2 size={14} /> Forget
+                <Trash2 size={13} /> Forget
               </button>
             )}
           </div>
-          <p className="hint">
-            {p.name} keeps its own evolving sense of you — separate from “Your story”, built up
-            automatically as you chat.
-          </p>
           {memory?.notes?.trim() ? (
             <pre className="characterNotes">{memory.notes.trim()}</pre>
           ) : (
             <p className="characterNotesEmpty">
-              Nothing yet — keep chatting and {p.name} will start to remember how you work and what
-              you’re after.
+              Nothing yet — {p.name} builds its own sense of you as you chat. Separate from “Your story”.
             </p>
           )}
           {memory?.updatedAt && (
-            <small className="characterMemoryMeta">Last updated {new Date(memory.updatedAt).toLocaleString()}</small>
+            <small className="characterMemoryMeta">Updated {new Date(memory.updatedAt).toLocaleString()}</small>
           )}
         </div>
       </aside>
@@ -327,26 +318,30 @@ export default function PersonalitySettings({ personas, activeId, onChanged }: P
   function renderForm(): ReactElement {
     const isEdit = editing?.mode === 'edit';
     const builtin = editing?.mode === 'edit' && editing.builtin;
-    const PreviewIcon = PERSONA_ICONS[form.icon] ?? PERSONA_ICONS.bot;
+    const preview = { id: 'preview', name: form.name, icon: form.icon, accent: form.accent, image: form.image.trim() || undefined } as Personality;
     return (
       <form className="settingsForm personaForm" onSubmit={submit}>
-        <h3>
-          {isEdit ? <><Pencil size={16} /> Edit {form.name.trim() || 'personality'}</> : <><Sparkles size={16} /> New personality</>}
-        </h3>
+        <div className="personaFormHead">
+          <button type="button" className="ghost personaFormBack" onClick={() => setEditing(null)} disabled={busy}>
+            <ChevronLeft size={16} /> Back
+          </button>
+          <h3>
+            {isEdit ? <><Pencil size={16} /> Edit personality</> : <><Sparkles size={16} /> New personality</>}
+          </h3>
+        </div>
+
         {builtin && (
           <p className="hint personaBuiltinNote">
-            This is a built-in personality. Your edits are saved as an override — use “Reset to
-            default” any time to restore the original.
+            Built-in personality — your edits are saved as an override. Use “Reset to default” any time to
+            restore the original.
           </p>
         )}
 
         <div className="personaPreviewRow">
-          <span className="personaMark lg" style={{ background: personaVisual({ id: 'preview', name: form.name, icon: form.icon, accent: form.accent } as Personality).gradient }}>
-            <PreviewIcon size={22} />
-          </span>
+          <PersonaMark persona={preview} size={23} className="personaMark lg" />
           <div>
             <strong>{form.name.trim() || 'Your personality'}</strong>
-            <small>Pick a look — this is how it shows up in the sidebar and chat.</small>
+            <small>{form.description.trim() || 'How it shows up in the sidebar and chat.'}</small>
           </div>
         </div>
 
@@ -387,6 +382,15 @@ export default function PersonalitySettings({ personas, activeId, onChanged }: P
         </label>
 
         <label>
+          Image <span className="optional">(optional — overrides the icon)</span>
+          <input
+            value={form.image}
+            placeholder="/personalities/my-ai.png or https://…"
+            onChange={(e) => setForm({ ...form, image: e.target.value })}
+          />
+        </label>
+
+        <label>
           Name
           <input
             autoFocus
@@ -403,6 +407,9 @@ export default function PersonalitySettings({ personas, activeId, onChanged }: P
             onChange={(e) => setForm({ ...form, description: e.target.value })}
           />
         </label>
+
+        <span className="personaFormSection">How it behaves</span>
+
         <label>
           Tone
           <input
@@ -446,7 +453,6 @@ export default function PersonalitySettings({ personas, activeId, onChanged }: P
         </label>
 
         <div className="personaFormActions">
-          <button type="button" className="pillBtn ghost" onClick={() => setEditing(null)} disabled={busy}>Cancel</button>
           {builtin && (
             <button type="button" className="pillBtn ghost" onClick={() => void resetToDefault()} disabled={busy}>
               <RotateCcw size={15} /> Reset to default

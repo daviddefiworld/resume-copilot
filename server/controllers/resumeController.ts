@@ -47,6 +47,11 @@ export const resumeController = {
   async streamMessage(req: Request, res: Response): Promise<void> {
     const body = req.body as { content?: string; approvedCalls?: unknown };
     const send = openSseStream(res);
+    // Stop button / client disconnect closes the socket → abort the run so it stops
+    // calling the model instead of finishing (and billing) in the background.
+    const stop = new AbortController();
+    let finished = false;
+    res.on('close', () => { if (!finished) stop.abort(); });
     try {
       const message = await resumeService.sendMessageStream(
         param(req, 'id'),
@@ -55,11 +60,16 @@ export const resumeController = {
         approvedCallsOf(body.approvedCalls),
         // The same SSE sink carries live plan/status/steer_ack events (the client
         // ignores unknown event types, so this is backward-compatible).
-        send
+        send,
+        stop.signal
       );
+      finished = true;
       send({ type: 'done', message });
     } catch (error) {
-      send({ type: 'error', error: error instanceof Error ? error.message : 'Request failed.' });
+      // A user stop ('Cancelled') is not a failure — the socket is already gone.
+      if (!(error instanceof Error && error.name === 'Cancelled')) {
+        send({ type: 'error', error: error instanceof Error ? error.message : 'Request failed.' });
+      }
     } finally {
       res.end();
     }
