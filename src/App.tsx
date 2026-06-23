@@ -67,6 +67,45 @@ export default function App() {
     loadPersona().catch(() => {});
   }, [loadSessions, loadPersona]);
 
+  // Pick up a job-hunt handoff started from the Lazybidder dashboard's "Apply with
+  // Copilot" button. The dashboard hits this desktop app's fixed-port bridge, which
+  // parks the intent and raises this window; here we poll for it (and re-check the
+  // moment the window regains focus, right after it's raised) and open a workspace
+  // seeded with the kickoff message — the same path as starting a hunt by hand.
+  useEffect(() => {
+    // Don't consume handoffs until a profile exists to own the session; the intent
+    // stays parked server-side until then.
+    if (needProfile || !activeProfileId) return;
+    let cancelled = false;
+
+    const checkOnce = async (): Promise<void> => {
+      if (cancelled) return;
+      try {
+        // Consume-on-read on the server makes concurrent polls safe: only one gets
+        // the intent, so the focus check and the interval can't double-open it.
+        const { intent } = await api.takeIntegrationIntent();
+        if (intent && !cancelled) await startResume(intent.message);
+      } catch {
+        /* bridge poll is best-effort */
+      }
+    };
+
+    const interval = window.setInterval(() => void checkOnce(), 2500);
+    const onFocus = (): void => void checkOnce();
+    window.addEventListener('focus', onFocus);
+    void checkOnce();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+    };
+    // startResume is recreated each render; we deliberately keep this poller
+    // subscribed across renders and re-subscribe only when the profile/persona
+    // change (the values startResume seeds a session with).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needProfile, activeProfileId, personaId]);
+
   const activePersona = personas.find((p) => p.id === personaId) ?? personas[0] ?? null;
 
   // Sync local profile state after any change. When the active profile changes

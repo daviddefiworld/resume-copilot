@@ -8,6 +8,7 @@ import resumeRoutes from './resumeRoutes.ts';
 import documentRoutes from './documentRoutes.ts';
 import atsRoutes from './atsRoutes.ts';
 import mcpRoutes from './mcpRoutes.ts';
+import integrationRoutes from './integrationRoutes.ts';
 
 // Combines every domain router under a single /api router.
 export function buildRouter(): Router {
@@ -23,6 +24,7 @@ export function buildRouter(): Router {
   router.use('/memory', memoryRoutes);
   router.use('/mcp', mcpRoutes);
   router.use('/', configRoutes);
+  router.use('/', integrationRoutes);
   router.use('/', resumeRoutes);
   router.use('/', documentRoutes);
   router.use('/', atsRoutes);

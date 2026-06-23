@@ -487,3 +487,14 @@ export interface ToolTraceEntry {
   // refused — not just the tool name — and only once.
   approvalToken?: string;
 }
+
+// A job-hunt handoff requested from outside the app (the Lazybidder dashboard's
+// "Apply with Copilot" button). Parked by the fixed-port integration bridge and
+// picked up by the renderer, which opens a workspace seeded with `message`.
+export interface IntegrationIntent {
+  job_id: string;
+  // The kickoff message the new session opens with, e.g.
+  // "I wanna apply this job with jobid <job_id>".
+  message: string;
+  created_at: string;
+}

@@ -2,6 +2,7 @@ import type {
   ATSReport,
   CharacterMemoryView,
   CopilotConfig,
+  IntegrationIntent,
   McpCatalogEntry,
   McpServerInput,
   McpServerStatus,
@@ -297,6 +298,11 @@ export const api = {
   updateSession: (id: string, fields: Partial<ResumeSession>) =>
     request<ResumeSession>(`/sessions/${id}`, { method: 'PATCH', body: fields }),
   deleteSession: (id: string) => request<{ ok: true }>(`/sessions/${id}`, { method: 'DELETE' }),
+
+  // Integration bridge: poll for a job-hunt handoff started from the Lazybidder
+  // dashboard's "Apply with Copilot" button. Consume-on-read — returns the next
+  // parked intent (or null) and clears it server-side.
+  takeIntegrationIntent: () => request<{ intent: IntegrationIntent | null }>('/integration/pending'),
 
   getSessionMessages: (id: string) => request<ResumeMessage[]>(`/sessions/${id}/messages`),
   sendSessionMessage: (id: string, content: string, approvedCalls: string[] = []) =>
