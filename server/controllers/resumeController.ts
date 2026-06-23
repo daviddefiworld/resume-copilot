@@ -35,9 +35,9 @@ export const resumeController = {
   },
 
   async sendMessage(req: Request, res: Response): Promise<void> {
-    const body = req.body as { content?: string; approvedCalls?: unknown };
+    const body = req.body as { content?: string };
     res.status(201).json(
-      await resumeService.sendMessage(param(req, 'id'), body.content ?? '', approvedCallsOf(body.approvedCalls))
+      await resumeService.sendMessage(param(req, 'id'), body.content ?? '')
     );
   },
 
@@ -45,7 +45,7 @@ export const resumeController = {
   // persisted message arrives in `done`. Registered without asyncHandler — it
   // owns its response and reports failures as an SSE `error` event.
   async streamMessage(req: Request, res: Response): Promise<void> {
-    const body = req.body as { content?: string; approvedCalls?: unknown };
+    const body = req.body as { content?: string };
     const send = openSseStream(res);
     // Stop button / client disconnect closes the socket → abort the run so it stops
     // calling the model instead of finishing (and billing) in the background.
@@ -57,7 +57,6 @@ export const resumeController = {
         param(req, 'id'),
         body.content ?? '',
         (text) => send({ type: 'delta', text }),
-        approvedCallsOf(body.approvedCalls),
         // The same SSE sink carries live plan/status/steer_ack events (the client
         // ignores unknown event types, so this is backward-compatible).
         send,
@@ -128,13 +127,6 @@ export const resumeController = {
     await sendPdf(req, res, 'inline');
   }
 };
-
-// Sanitize the optional approvedCalls field from a chat request: the explicit
-// one-turn approval tokens (callToken fingerprints) the user authorized. Anything
-// not a clean string array becomes an empty list (gate stays closed).
-function approvedCallsOf(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((t): t is string => typeof t === 'string') : [];
-}
 
 async function sendPdf(req: Request, res: Response, disposition: 'attachment' | 'inline'): Promise<void> {
   const version = resumeService.getVersion(param(req, 'id'));

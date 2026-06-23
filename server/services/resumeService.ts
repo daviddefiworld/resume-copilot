@@ -176,27 +176,25 @@ class ResumeService {
     return resumeRepository.listMessages(sessionId);
   }
 
-  async sendMessage(sessionId: string, content: string, approvedCalls: string[] = []): Promise<ResumeMessage> {
+  async sendMessage(sessionId: string, content: string): Promise<ResumeMessage> {
     return this.runChat(sessionId, content, () => {}, (messages, localTools, steer) =>
-      agentRunner.run(messages, { localTools, approvedCalls, steer }));
+      agentRunner.run(messages, { localTools, steer }));
   }
 
   // Streaming counterpart: in plain conversation (no draft yet) the reply streams
   // token-by-token through `onDelta`. Canvas mode runs a strict-JSON edit turn
   // that can't be streamed, so its reply lands whole — onDelta is simply never
-  // called and the finished message arrives at once. `approvedCalls` carries the
-  // fingerprint tokens of previously-refused external calls the user approved.
-  // `pushEvent` sends live plan/status/steer_ack events down the open SSE stream.
+  // called and the finished message arrives at once. `pushEvent` sends live
+  // plan/status/steer_ack events down the open SSE stream.
   async sendMessageStream(
     sessionId: string,
     content: string,
     onDelta: StreamDelta,
-    approvedCalls: string[] = [],
     pushEvent: (event: RunEvent) => void = () => {},
     signal?: AbortSignal
   ): Promise<ResumeMessage> {
     return this.runChat(sessionId, content, pushEvent, (messages, localTools, steer) =>
-      agentRunner.runStream(messages, { localTools, approvedCalls, steer, signal }, onDelta), signal);
+      agentRunner.runStream(messages, { localTools, steer, signal }, onDelta), signal);
   }
 
   // Queue a steering message onto the session's in-flight run, so the agent folds

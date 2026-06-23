@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { Check, FolderOpen, PanelRightOpen, Wand2 } from 'lucide-react';
+import { FolderOpen, PanelRightOpen, Wand2 } from 'lucide-react';
 import { api, isStopped } from '../api.ts';
-import { foldActivity, shortToolName } from '../agentActivity.ts';
+import { foldActivity } from '../agentActivity.ts';
 import Chat from '../components/Chat.tsx';
 import ResumePanel from '../components/ResumePanel.tsx';
 import Workspace from '../components/Workspace.tsx';
@@ -125,7 +125,7 @@ export default function SessionView({ sessionId, templates, personas, onSessionC
     if (event.key === 'Escape') setIsEditingTitle(false);
   }
 
-  async function send(content: string, approvedCalls: string[] = []): Promise<void> {
+  async function send(content: string): Promise<void> {
     const priorVersions = versions.list.length;
     const priorDocs = documents.length;
     setMessages((prev) => [...prev, { id: `tmp-${Date.now()}`, session_id: sessionId, role: 'user', content, created_at: '' }]);
@@ -141,7 +141,7 @@ export default function SessionView({ sessionId, templates, personas, onSessionC
     // collected here and re-sent as a fresh turn once this one settles, so they get answered.
     const deferred: string[] = [];
     try {
-      await api.sendSessionMessageStream(sessionId, content, (text) => setStreaming((prev) => prev + text), approvedCalls, {
+      await api.sendSessionMessageStream(sessionId, content, (text) => setStreaming((prev) => prev + text), {
         onPlan: (body) => {
           setLivePlan(body);
           // Reveal the Workspace the first time a live plan appears this turn (the
@@ -275,18 +275,6 @@ export default function SessionView({ sessionId, templates, personas, onSessionC
   // subtitle carries the role + location rather than repeating the company.
   const subtitle = [session.job_title, session.location].filter(Boolean).join(' · ') || `Tell ${personaName} about the job`;
 
-  // External calls Sox tried to make but the approval gate refused, taken from the
-  // latest assistant turn. Each becomes an "Approve & send" button that re-runs the
-  // turn authorizing exactly that call (by its fingerprint token), once.
-  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant');
-  const pendingApprovals: { token: string; tool: string }[] = [];
-  const seenTokens = new Set<string>();
-  for (const t of lastAssistant?.tool_trace ?? []) {
-    if (t.needsApproval && t.approvalToken && !seenTokens.has(t.approvalToken)) {
-      seenTokens.add(t.approvalToken);
-      pendingApprovals.push({ token: t.approvalToken, tool: t.tool });
-    }
-  }
   const actions = (
     <>
       <button className="chip" onClick={draft} disabled={busy}><Wand2 size={14} /> Generate draft</button>
@@ -296,17 +284,6 @@ export default function SessionView({ sessionId, templates, personas, onSessionC
       {versions.list.length > 0 && (
         <button className="chip" onClick={() => setShowResume(true)}><PanelRightOpen size={14} /> View resume</button>
       )}
-      {pendingApprovals.map(({ token, tool }) => (
-        <button
-          key={token}
-          className="chip approve"
-          disabled={busy}
-          title={`Authorize Sox to run ${tool} exactly as shown`}
-          onClick={() => void send(`Approved — go ahead and run ${shortToolName(tool)} exactly as shown.`, [token])}
-        >
-          <Check size={14} /> Approve &amp; send: {shortToolName(tool)}
-        </button>
-      ))}
     </>
   );
 

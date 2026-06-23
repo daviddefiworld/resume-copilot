@@ -475,17 +475,9 @@ export interface ToolTraceEntry {
   // The COMPLETE raw response object, pretty-printed JSON — every field the tool
   // returned (all content blocks, structuredContent, metadata, errors), not just
   // the flattened text. Shown in chat so the full data is visible. MCP calls only;
-  // absent for local/workspace tools and approval refusals (their result is whole).
+  // absent for local/workspace tools (their result is whole).
   raw?: string;
   ok: boolean;
-  // Set when the agent tried to call an external (non-read-only) tool without
-  // approval and it was refused. The UI uses this to offer an "approve & send"
-  // action that re-runs the turn authorizing that one call.
-  needsApproval?: boolean;
-  // Fingerprint of the refused {name, args} call. The "approve & send" action
-  // echoes this back so the server authorizes exactly the payload that was
-  // refused — not just the tool name — and only once.
-  approvalToken?: string;
 }
 
 // A job-hunt handoff requested from outside the app (the Lazybidder dashboard's

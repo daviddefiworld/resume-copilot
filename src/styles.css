@@ -148,6 +148,20 @@ button.ghost.danger:hover { color: var(--danger); }
 .sessionRow:hover .rowDelete { display: inline-flex; }
 .rowDelete:hover { color: var(--danger); }
 
+/* Foldable date groups in the job-hunt history (Yesterday, Previous 7 days, …). */
+.sessionGroup { margin-top: 2px; }
+.sessionGroupHeader {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; text-align: left; padding: 6px 11px; border-radius: 9px;
+  color: var(--faint); font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.sessionGroupHeader:hover { background: var(--elevated); color: var(--muted); }
+.sessionGroupHeader svg { flex-shrink: 0; }
+.sessionGroupLabel { flex: 1; }
+.sessionGroupCount { color: var(--faint); font-weight: 600; }
+
 .sidebarFooter { border-top: 1px solid var(--border-soft); padding-top: 6px; }
 .footerBtn .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); margin-left: auto; }
 
@@ -366,10 +380,6 @@ button.ghost.danger:hover { color: var(--danger); }
   border: 1px solid var(--border); color: var(--text); background: var(--main);
 }
 .chip:hover:not(:disabled) { background: var(--elevated); }
-/* Approval action: the user authorizing a refused external send. Accent-filled so
-   it reads as the deliberate, consequential action it is. */
-.chip.approve { background: var(--accent); border-color: var(--accent); color: #1a1206; font-weight: 600; }
-.chip.approve:hover:not(:disabled) { background: var(--accent-hover); }
 /* Claude-Code-style composer: a rounded card with the input on top and a slim
    toolbar (keyboard hint + send) underneath. The whole card lifts and shows an
    accent ring on focus. */

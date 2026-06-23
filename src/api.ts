@@ -305,20 +305,18 @@ export const api = {
   takeIntegrationIntent: () => request<{ intent: IntegrationIntent | null }>('/integration/pending'),
 
   getSessionMessages: (id: string) => request<ResumeMessage[]>(`/sessions/${id}/messages`),
-  sendSessionMessage: (id: string, content: string, approvedCalls: string[] = []) =>
-    request<ResumeMessage>(`/sessions/${id}/messages`, { method: 'POST', body: { content, approvedCalls } }),
+  sendSessionMessage: (id: string, content: string) =>
+    request<ResumeMessage>(`/sessions/${id}/messages`, { method: 'POST', body: { content } }),
   // Streaming send: `onDelta` receives the reply text as it is generated. Canvas
   // (resume-edit) turns can't stream, so they arrive whole with no deltas.
-  // `approvedCalls` carries one-turn approval tokens for previously-refused calls;
   // `handlers` receives live plan/status/steer-ack events during the turn.
   sendSessionMessageStream: (
     id: string,
     content: string,
     onDelta: (text: string) => void,
-    approvedCalls: string[] = [],
     handlers: StreamHandlers = {},
     signal?: AbortSignal
-  ) => streamRequest<ResumeMessage>(`/sessions/${id}/messages/stream`, { content, approvedCalls }, onDelta, handlers, signal),
+  ) => streamRequest<ResumeMessage>(`/sessions/${id}/messages/stream`, { content }, onDelta, handlers, signal),
   // Steer the in-flight run for a session: queue a message the agent folds in at
   // its next step. 409 when no run is active (the caller sends a normal turn instead).
   steerSession: (id: string, content: string) =>
