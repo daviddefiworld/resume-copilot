@@ -341,7 +341,6 @@ export default function SessionView({ sessionId, templates, personas, onSessionC
             placeholder="Paste the job description, or ask Sox to tweak the resume…"
             emptyState={emptyState}
             actions={actions}
-            disclaimer="Sox builds on your memory and fills in realistic detail to fit the job — review before sending."
           />
         </div>
 

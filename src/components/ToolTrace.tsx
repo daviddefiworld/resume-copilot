@@ -3,13 +3,21 @@ import { Check, ChevronRight, Wrench, X } from 'lucide-react';
 import type { ToolTraceEntry } from '../../shared/types.ts';
 
 // Renders the tool calls an agent made for one assistant turn, above its reply.
-// Each call is a collapsed row (server · tool + ok/fail) that expands to show the
-// input the model sent and the raw result it got back.
+// The whole trace stays HIDDEN behind a small toggle so the chat reads as a clean
+// conversation; clicking it reveals each call, and each call can then be expanded
+// further to show the input the model sent and the raw result it got back.
 export default function ToolTrace({ entries }: { entries?: ToolTraceEntry[] }) {
+  const [shown, setShown] = useState(false);
   if (!entries || entries.length === 0) return null;
+  const count = entries.length;
   return (
     <div className="toolTrace">
-      {entries.map((entry, i) => (
+      <button className="toolTraceToggle" onClick={() => setShown((s) => !s)} aria-expanded={shown}>
+        <Wrench size={12} />
+        <span>{shown ? 'Hide' : 'Show'} tool {count === 1 ? 'call' : 'calls'} ({count})</span>
+        <ChevronRight size={12} className={`toolChevron ${shown ? 'open' : ''}`} />
+      </button>
+      {shown && entries.map((entry, i) => (
         <ToolCallRow key={i} entry={entry} />
       ))}
     </div>

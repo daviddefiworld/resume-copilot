@@ -179,6 +179,16 @@ class Connection {
         PRIMARY KEY (profile_id, personality_id)
       );
 
+      CREATE TABLE IF NOT EXISTS usage_totals (
+        id                INTEGER PRIMARY KEY CHECK (id = 1),
+        prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+        completion_tokens INTEGER NOT NULL DEFAULT 0,
+        total_tokens      INTEGER NOT NULL DEFAULT 0,
+        cost              REAL    NOT NULL DEFAULT 0,
+        requests          INTEGER NOT NULL DEFAULT 0,
+        updated_at        TEXT    NOT NULL DEFAULT ''
+      );
+
       CREATE TABLE IF NOT EXISTS mcp_servers (
         id         TEXT PRIMARY KEY,
         name       TEXT NOT NULL,

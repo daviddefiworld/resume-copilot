@@ -19,7 +19,8 @@ import type {
   ResumeVersion,
   SessionDocument,
   SettingsView,
-  Template
+  Template,
+  UsageView
 } from '../shared/types.ts';
 
 // Single client for the backend API. The frontend never talks to OpenRouter
@@ -233,6 +234,9 @@ export const api = {
   getSettings: () => request<SettingsView>('/settings'),
   saveSettings: (body: { apiKey?: string; model?: string; model2?: string }) =>
     request<SettingsView>('/settings', { method: 'POST', body }),
+  // Total OpenRouter token/cost consumption, and a reset back to zero.
+  getUsage: () => request<UsageView>('/usage'),
+  resetUsage: () => request<UsageView>('/usage/reset', { method: 'POST' }),
   getPersonalities: () => request<Personality[]>('/personalities'),
   createPersonality: (body: Partial<Personality> & { name: string }) =>
     request<Personality>('/personalities', { method: 'POST', body }),

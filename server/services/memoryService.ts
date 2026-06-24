@@ -8,7 +8,6 @@ import { settingsService } from './settingsService.ts';
 import { profileService } from './profileService.ts';
 import { personalityService } from './personalityService.ts';
 import { characterMemoryService } from './characterMemoryService.ts';
-import { documentService } from './documentService.ts';
 import { memoryInterviewSystem, memoryExtractionPrompt } from './prompts.ts';
 import type { RunEvent } from './runRegistry.ts';
 import type { ChatMessage, ChatRole, MemoryItem, MemoryMessage, MemoryProposal, ToolTraceEntry } from '../../shared/types.ts';
@@ -120,11 +119,7 @@ class MemoryService {
       ...history
     ]);
 
-    // The copilot has no document tools, so any "I saved it to a doc" claim is
-    // necessarily false — correct it before persisting (a safety net behind the
-    // prompt, which already tells the copilot it cannot write documents here).
-    const safeContent = documentService.reconcileClaims(result.content, result.trace);
-    const reply = this.append('assistant', safeContent, profileId, result.trace);
+    const reply = this.append('assistant', result.content, profileId, result.trace);
 
     // Let the character reflect on the conversation so its memory evolves. Runs
     // only when the chat has grown enough; failures never affect the reply. Kept

@@ -184,7 +184,7 @@ export default function Sidebar({
 
       <nav className="sidebarNav">
         <button className={navActive('copilot') ? 'active' : ''} onClick={() => onSelectView('copilot')}>
-          <Sparkles size={16} /> Chat with {persona?.name ?? 'Sox'}
+          <Sparkles size={16} /> Introduce yourself
         </button>
         <button className={navActive('memory') ? 'active' : ''} onClick={() => onSelectView('memory')}>
           <BookOpen size={16} /> Your story

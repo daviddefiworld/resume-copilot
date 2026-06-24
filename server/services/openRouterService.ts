@@ -1,4 +1,5 @@
 import { settingsService } from './settingsService.ts';
+import { usageService } from './usageService.ts';
 import type { ChatMessage, OpenAITool, ToolCall } from '../../shared/types.ts';
 
 const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
@@ -27,6 +28,10 @@ interface CallOptions {
   // Per-call ceiling in ms (defaults to DEFAULT_TIMEOUT_MS). Heavy generations
   // raise it; the agent loop leaves it at the default and bounds itself separately.
   timeoutMs?: number;
+  // json() only: how many times to re-roll the generation on a malformed-JSON (or
+  // transient upstream) failure before giving up. Big structured outputs like a
+  // full resume occasionally come back truncated/invalid; a re-roll usually fixes it.
+  retries?: number;
 }
 
 interface CompleteOptions extends CallOptions {
@@ -50,13 +55,24 @@ interface RawMessage {
   tool_calls?: ToolCall[];
 }
 
+// OpenRouter usage accounting, returned when the request sets
+// `usage: { include: true }`. `cost` is the actual USD billed for the call.
+interface OpenRouterUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  cost?: number;
+}
+
 interface CompletionResponse {
   choices?: Array<{ message?: RawMessage }>;
+  usage?: OpenRouterUsage;
 }
 
 // A single SSE chunk from a streaming completion. `delta.content` is the next
 // slice of text; tool calls arrive in indexed pieces spread across chunks
-// (id/name once, arguments accumulated character-by-character).
+// (id/name once, arguments accumulated character-by-character). The final chunk
+// carries `usage` (token counts + cost) when the request opts into accounting.
 interface StreamChunk {
   choices?: Array<{
     delta?: {
@@ -68,6 +84,7 @@ interface StreamChunk {
       }>;
     };
   }>;
+  usage?: OpenRouterUsage;
 }
 
 // True when an OpenRouter error looks like the model rejecting json_object
@@ -98,6 +115,24 @@ function describeNetworkError(error: unknown): string {
   return cause?.message || (error as Error).message || 'unknown network error';
 }
 
+// Whether a failed json() attempt is worth re-rolling. Malformed/truncated JSON
+// (the common failure on big structured outputs) and transient 5xx/network blips
+// are; a user Stop, a slow timeout (a re-roll would just wait the full ceiling
+// again), a 4xx, or a missing API key are not — a retry can't fix those.
+function shouldRetryJson(error: unknown): boolean {
+  const e = error as { name?: string; message?: string };
+  if (e?.name === 'Cancelled') return false;
+  const message = (e?.message ?? '').toLowerCase();
+  if (message.includes('timed out')) return false;
+  if (/\(4\d\d\)/.test(message)) return false;
+  if (message.includes('api key is not set')) return false;
+  return true;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // Owns every outbound AI request. Services talk to this class, never to
 // OpenRouter directly, so credentials and transport stay in one place.
 class OpenRouterService {
@@ -110,15 +145,36 @@ class OpenRouterService {
   // value. Throws if the model returns unparseable output. Not every model on
   // OpenRouter accepts response_format: json_object, so fall back to a plain
   // request (our prompts already demand JSON and parseJson is tolerant).
-  async json<T = unknown>(messages: ChatMessage[], { temperature = 0.2, model, signal, timeoutMs }: CallOptions = {}): Promise<T> {
-    let content: string;
+  async json<T = unknown>(messages: ChatMessage[], { temperature = 0.2, model, signal, timeoutMs, retries = 2 }: CallOptions = {}): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const content = await this.requestJson(messages, { temperature, model, signal, timeoutMs });
+        return this.parseJson<T>(content);
+      } catch (error) {
+        lastError = error;
+        // Give up at once on errors a re-roll can't fix (Stop, timeout, 4xx); for
+        // malformed/truncated JSON or a transient blip, re-roll with a short backoff.
+        if (attempt >= retries || !shouldRetryJson(error)) throw error;
+        await delay(300 * (attempt + 1));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error('AI response could not be parsed as JSON.');
+  }
+
+  // One JSON request: prefer response_format json_object, but fall back to a plain
+  // request for the models that reject it (our prompts already demand JSON, and
+  // parseJson is tolerant of prose/code-fence wrapping).
+  private async requestJson(
+    messages: ChatMessage[],
+    opts: { temperature: number; model?: string; signal?: AbortSignal; timeoutMs?: number }
+  ): Promise<string> {
     try {
-      content = await this.request(messages, { temperature, model, signal, timeoutMs, responseFormat: { type: 'json_object' } });
+      return await this.request(messages, { ...opts, responseFormat: { type: 'json_object' } });
     } catch (error) {
       if (!unsupportedJsonFormat(error)) throw error;
-      content = await this.request(messages, { temperature, model, signal, timeoutMs });
+      return this.request(messages, opts);
     }
-    return this.parseJson<T>(content);
   }
 
   // Agentic turn: send the conversation plus the tools the model may call, and
@@ -187,6 +243,12 @@ class OpenRouterService {
       throw new Error('OpenRouter API key is not set. Add it in Settings.');
     }
 
+    // Ask OpenRouter to return usage accounting (token counts + the actual USD
+    // cost of the call) on every request, buffered or streamed, so usageService
+    // can total it for the Settings display. Set at this single chokepoint so no
+    // call path can forget it.
+    body.usage = { include: true };
+
     // Bound the whole request so a stalled connection fails cleanly with a clear
     // message instead of hanging or surfacing a bare "fetch failed". When the
     // caller passes a run deadline, abort as soon as either fires.
@@ -254,6 +316,7 @@ class OpenRouterService {
       // (un-streamed) response — shape that abort like any other transport error.
       throw this.transportError(error, timeoutMs);
     }
+    usageService.record(data.usage);
     const message = data.choices?.[0]?.message;
     if (!message) {
       throw new Error('OpenRouter returned an empty response.');
@@ -279,6 +342,7 @@ class OpenRouterService {
     const decoder = new TextDecoder();
     let buffer = '';
     let content = '';
+    let usage: OpenRouterUsage | undefined;
     const toolCalls: ToolCall[] = [];
 
     try {
@@ -302,6 +366,9 @@ class OpenRouterService {
           } catch {
             continue; // a malformed/partial payload; ignore it
           }
+          // The final chunk usually carries usage with an empty choices array,
+          // so capture it before the delta guard below skips choiceless chunks.
+          if (chunk.usage) usage = chunk.usage;
           const delta = chunk.choices?.[0]?.delta;
           if (!delta) continue;
           if (typeof delta.content === 'string' && delta.content) {
@@ -323,6 +390,7 @@ class OpenRouterService {
       throw this.transportError(error, timeoutMs);
     }
 
+    usageService.record(usage);
     // The array can be sparse if providers number tool calls non-contiguously.
     const calls = toolCalls.filter(Boolean);
     return { content, tool_calls: calls.length > 0 ? calls : undefined };

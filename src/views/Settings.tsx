@@ -1,12 +1,18 @@
 import { useEffect, useState } from 'react';
-import { FileText, KeyRound, Plug, Save, SlidersHorizontal, Sparkles, UserRound } from 'lucide-react';
+import { Activity, FileText, KeyRound, Plug, RotateCcw, Save, SlidersHorizontal, Sparkles, UserRound } from 'lucide-react';
 import type { FormEvent } from 'react';
 import { api } from '../api.ts';
 import PromptsSettings from '../components/PromptsSettings.tsx';
 import ProfilesSettings from '../components/ProfilesSettings.tsx';
 import PersonalitySettings from '../components/PersonalitySettings.tsx';
 import McpSettings from '../components/McpSettings.tsx';
-import type { Personality, Profile, SettingsView } from '../../shared/types.ts';
+import type { Personality, Profile, SettingsView, UsageView } from '../../shared/types.ts';
+
+// Token counts read better grouped (1,234,567); cost is OpenRouter's real USD
+// figure, shown to 4 dp so small running totals stay visible (not rounded to $0).
+const fmtTokens = (n: number): string => Math.round(n).toLocaleString();
+const fmtCost = (n: number): string =>
+  '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 
 type Tab = 'general' | 'profiles' | 'personality' | 'tools' | 'prompts';
 
@@ -48,6 +54,10 @@ export default function Settings({
   const [model2, setModel2] = useState('');
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  // API usage totals (tokens + cost), with a two-step inline reset confirm.
+  const [usage, setUsage] = useState<UsageView | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [usageError, setUsageError] = useState('');
 
   useEffect(() => {
     api.getSettings().then((s) => {
@@ -55,7 +65,18 @@ export default function Settings({
       setModel(s.model);
       setModel2(s.model2);
     });
+    api.getUsage().then(setUsage).catch(() => {});
   }, []);
+
+  async function resetUsage(): Promise<void> {
+    setUsageError('');
+    try {
+      setUsage(await api.resetUsage());
+      setConfirmReset(false);
+    } catch (e) {
+      setUsageError((e as Error).message);
+    }
+  }
 
   async function save(event: FormEvent): Promise<void> {
     event.preventDefault();
@@ -130,6 +151,7 @@ export default function Settings({
             onChanged={onPersonaChange}
           />
         ) : tab === 'general' ? (
+          <>
           <form className="settingsForm" onSubmit={save}>
             {error && <p className="error">{error}</p>}
             {saved && <p className="ok">Saved.</p>}
@@ -164,6 +186,55 @@ export default function Settings({
 
             <button type="submit"><Save size={15} /> Save settings</button>
           </form>
+
+          <section className="usageCard">
+            <div className="usageHead">
+              <div className="usageTitle"><Activity size={15} /> API usage</div>
+              <span className="usageSince">
+                {usage?.updatedAt ? `Last call ${new Date(usage.updatedAt).toLocaleString()}` : 'Nothing tracked yet'}
+              </span>
+            </div>
+            <div className="usageGrid">
+              <div className="usageStat">
+                <span className="usageNum">{fmtCost(usage?.cost ?? 0)}</span>
+                <span className="usageLabel">Total cost</span>
+              </div>
+              <div className="usageStat">
+                <span className="usageNum">{fmtTokens(usage?.totalTokens ?? 0)}</span>
+                <span className="usageLabel">Total tokens</span>
+              </div>
+              <div className="usageStat">
+                <span className="usageNum">{fmtTokens(usage?.requests ?? 0)}</span>
+                <span className="usageLabel">Requests</span>
+              </div>
+            </div>
+            <div className="usageBreakdown">
+              <span>{fmtTokens(usage?.promptTokens ?? 0)} prompt</span>
+              <span className="usageDot">·</span>
+              <span>{fmtTokens(usage?.completionTokens ?? 0)} completion</span>
+            </div>
+            <div className="usageActions">
+              {usageError && <span className="error usageErr">{usageError}</span>}
+              {confirmReset ? (
+                <>
+                  <span className="usageConfirm">Reset totals to zero?</span>
+                  <button type="button" className="ghost" onClick={() => setConfirmReset(false)}>Cancel</button>
+                  <button type="button" className="ghost danger" onClick={() => void resetUsage()}>Reset</button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => { setUsageError(''); setConfirmReset(true); }}
+                  disabled={!usage || usage.requests === 0}
+                >
+                  <RotateCcw size={14} /> Reset
+                </button>
+              )}
+            </div>
+            <p className="usageNote">Cost is the actual amount OpenRouter billed across all calls, including the resume and memory models.</p>
+          </section>
+          </>
         ) : tab === 'tools' ? (
           <McpSettings />
         ) : (

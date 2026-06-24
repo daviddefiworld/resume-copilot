@@ -1,17 +1,7 @@
 import { randomUUID } from 'crypto';
 import { documentRepository } from '../repositories/documentRepository.ts';
 import type { LocalTool } from './agentRunner.ts';
-import type { OpenAITool, SessionDocument, ToolTraceEntry } from '../../shared/types.ts';
-
-// The workspace tools whose success genuinely backs an "I saved/updated it" claim.
-const DOC_WRITE_TOOLS = new Set(['upsert_document', 'append_to_document', 'set_next_steps']);
-
-// A past-tense claim that a workspace document was written. Deliberately narrow —
-// a write verb followed (within one sentence) by a concrete document noun — so it
-// fires on "I've drafted it in your Outreach Log document" but not on everyday
-// phrasing like "I saved you some time".
-const DOC_WRITE_CLAIM =
-  /\b(saved|added|updated|created|wrote|logged|drafted|appended|recorded|stored|noted)\b[^.!?\n]{0,80}?\b(document|doc|workspace|company brief|role detail|fit map|resume notes|key people|outreach log|pipeline|interview prep|next steps|target profile)\b/i;
+import type { OpenAITool, SessionDocument } from '../../shared/types.ts';
 
 interface DocumentFields {
   title?: string;
@@ -108,18 +98,6 @@ class DocumentService {
     return this.get(existing.id);
   }
 
-  // Reconcile a finished reply against what the agent actually did: if it claims
-  // (past tense) it wrote a workspace document but NO document tool call succeeded
-  // this turn, append an honest correction so the user is never told a document
-  // exists that doesn't. The prompts already forbid the false claim; this is the
-  // safety net that catches the rare miss (and every miss in the copilot chat,
-  // which has no document tools at all, so `trace` is empty there). Conservative
-  // by design — it only fires on a clear write claim with zero successful writes.
-  reconcileClaims(content: string, trace: ToolTraceEntry[] = []): string {
-    const wroteADocument = trace.some((t) => t.ok && DOC_WRITE_TOOLS.has(t.tool));
-    if (wroteADocument || !DOC_WRITE_CLAIM.test(content)) return content;
-    return `${content.trim()}\n\n_(Correction: I haven't actually saved that to a document yet — say the word and I'll write it.)_`;
-  }
 
   // A compact snapshot of the workspace injected into the session chat as a
   // system message, so Sox always knows which documents exist and keeps them

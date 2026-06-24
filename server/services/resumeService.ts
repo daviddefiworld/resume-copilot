@@ -258,8 +258,14 @@ class ResumeService {
 
       // The session's living workspace: a system snapshot of its documents plus the
       // tools Sox uses to maintain them. set_next_steps fires onPlanChange so the
-      // "Next Steps" checklist updates live mid-turn over the SSE stream.
-      const localTools = documentService.tools(sessionId, (body) => handle.pushEvent({ type: 'plan', body }));
+      // "Next Steps" checklist updates live mid-turn over the SSE stream. Before the
+      // first draft exists, Sox also gets the generate_resume_draft tool so it can
+      // produce the resume itself when the user asks; once a draft is open, edits go
+      // through canvas mode instead, so the tool is dropped.
+      const localTools = [
+        ...documentService.tools(sessionId, (body) => handle.pushEvent({ type: 'plan', body })),
+        ...(latest ? [] : [this.draftTool(sessionId)])
+      ];
       const workspace: ChatMessage = { role: 'system', content: documentService.promptContext(sessionId) };
       // The durable plan, fed back in so Sox sees and advances its own committed
       // plan each turn instead of relying on lossy chat recap.
@@ -311,9 +317,7 @@ class ResumeService {
       // user row, we signal it `deferred` so the client re-sends it as a fresh turn
       // that actually gets answered.
       handle.acceptingSteers = false;
-      // Never persist a reply that claims a document write the trace doesn't back.
-      const safeContent = documentService.reconcileClaims(reply.content, reply.trace);
-      const assistant = this.appendMessage(sessionId, 'assistant', safeContent, reply.trace, nextTs());
+      const assistant = this.appendMessage(sessionId, 'assistant', reply.content, reply.trace, nextTs());
       // Name the session after its company the moment the conversation reveals it.
       // Runs only while the company is still unknown (so it fires early, then stops),
       // and is best-effort so it can never break the turn. The reply text is already
@@ -403,7 +407,10 @@ class ResumeService {
 
   // ---- Resume drafts ----
 
-  async generateDraft(sessionId: string, templateId?: string): Promise<ResumeVersion> {
+  // Generate a tailored resume version from the session's memory + analysis, and
+  // save it. Shared by the "Generate draft" button and the in-chat generate tool.
+  // Does NOT touch the chat transcript — the caller decides what to say about it.
+  async generateDraftVersion(sessionId: string, templateId?: string): Promise<ResumeVersion> {
     let session = this.getSession(sessionId);
     // Build from the session's OWN profile, not necessarily the active one, so a
     // resume always reflects the profile it was created under.
@@ -422,17 +429,55 @@ class ResumeService {
     // It's a single large structured-JSON generation, so it legitimately runs longer
     // than the 90s default — give it a wider per-call ceiling (still under the route's
     // own asyncHandler cap) so a slow final model finishes instead of being aborted.
+    // The resume is the largest structured output, so it's the most likely to come
+    // back truncated/invalid — give it extra re-rolls before surfacing a failure.
     const draft = await openRouter.json<ResumeDraft>(
       resumeDraftPrompt({ personality, analysis: session.analysis as JobAnalysis, memory, target: session }),
-      { model: settingsService.finalModel(), timeoutMs: 140_000 }
+      { model: settingsService.finalModel(), timeoutMs: 140_000, retries: 3 }
     );
-    const version = this.saveVersion(sessionId, draft, getTemplate(templateId).id);
+    return this.saveVersion(sessionId, draft, getTemplate(templateId).id);
+  }
 
-    // Surface the draft as a chat exchange so the session stays one conversation:
-    // a user-style request and Sox's strategy reply. The resume itself is the canvas.
+  // The "Generate draft" button path: build the version AND surface it as a chat
+  // exchange (a user-style request + Sox's strategy reply) so the session reads as
+  // one conversation. The in-chat tool calls generateDraftVersion directly instead,
+  // letting Sox's own reply introduce the draft.
+  async generateDraft(sessionId: string, templateId?: string): Promise<ResumeVersion> {
+    const version = await this.generateDraftVersion(sessionId, templateId);
     this.appendMessage(sessionId, 'user', 'Generate a resume tailored to this role.');
     this.appendMessage(sessionId, 'assistant', draftSummary(version));
     return version;
+  }
+
+  // The in-chat resume generator, given to the session agent as a local tool so Sox
+  // can produce the tailored draft itself the moment the user asks — instead of
+  // telling them to click a button or (worse) writing a "resume" into a workspace
+  // document. It creates a real resume version; the client's post-turn refresh then
+  // opens it on the canvas, and Sox's own reply tells the user it's ready.
+  private draftTool(sessionId: string): LocalTool {
+    return {
+      definition: {
+        type: 'function',
+        function: {
+          name: 'generate_resume_draft',
+          description:
+            "Generate the tailored resume draft for THIS job from the user's saved memory and the role, " +
+            'and open it on the resume canvas. Call this whenever the user asks to make, see, or generate ' +
+            'the resume (or agrees to it) — this IS how the draft is produced. Do NOT write the resume into ' +
+            'a workspace document and do NOT tell the user to click a button. Needs the job known and saved ' +
+            "memory to exist; after it succeeds, tell them in one short line that the draft is open on the right.",
+          parameters: { type: 'object', properties: {}, required: [] }
+        }
+      },
+      run: async () => {
+        try {
+          const version = await this.generateDraftVersion(sessionId);
+          return { text: `Generated resume draft v${version.version_number}. It is open on the canvas.`, ok: true };
+        } catch (error) {
+          return { text: error instanceof Error ? error.message : 'Could not generate the draft.', ok: false };
+        }
+      }
+    };
   }
 
   private saveVersion(sessionId: string, draft: ResumeDraft, templateId = 'classic_ats'): ResumeVersion {

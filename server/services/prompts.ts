@@ -280,8 +280,10 @@ export function resumeChatSystem(input: {
       'Ask only about the company now.';
   } else {
     step =
-      'You have both the job and the company. Confirm both briefly, point out the strongest fit ' +
-      'and any gaps from their memory, and invite them to click "Generate draft" when ready.';
+      'You have both the job and the company. Confirm both briefly, point out the strongest fit and ' +
+      'any gaps from their memory. When they want the resume, GENERATE it yourself with the ' +
+      'generate_resume_draft tool — never tell them to click a button, and never write a resume into ' +
+      'a workspace document.';
   }
   const memoryNudge = memory
     ? ''

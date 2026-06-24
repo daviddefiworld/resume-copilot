@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import settingsRoutes from './settingsRoutes.ts';
+import usageRoutes from './usageRoutes.ts';
 import promptsRoutes from './promptsRoutes.ts';
 import configRoutes from './configRoutes.ts';
 import profileRoutes from './profileRoutes.ts';
@@ -19,6 +20,7 @@ export function buildRouter(): Router {
   });
 
   router.use('/settings', settingsRoutes);
+  router.use('/usage', usageRoutes);
   router.use('/prompts', promptsRoutes);
   router.use('/profiles', profileRoutes);
   router.use('/memory', memoryRoutes);

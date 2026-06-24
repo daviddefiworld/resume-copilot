@@ -329,6 +329,18 @@ export interface SettingsView {
   model2: string;
 }
 
+// Running totals of OpenRouter API consumption, shown in Settings → General.
+// `cost` is the actual USD OpenRouter reported across all calls; `updatedAt` is
+// the ISO time of the most recent recorded call (null when nothing tracked yet).
+export interface UsageView {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cost: number;
+  requests: number;
+  updatedAt: string | null;
+}
+
 export interface MemoryProposal {
   // 'update' overwrites the existing item named by `id`; 'new' (or absent)
   // inserts a fresh item.
